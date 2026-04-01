@@ -64,6 +64,9 @@ function App() {
   });
   const [vLeagueSavingMatches, setVLeagueSavingMatches] = useState(false);
   const [vLeaguePushingToCalendar, setVLeaguePushingToCalendar] = useState(false);
+  const [vLeagueSyncingCalendar, setVLeagueSyncingCalendar] = useState(false);
+  const [vLeagueResultDrafts, setVLeagueResultDrafts] = useState({});
+  const [vLeagueResultSavingId, setVLeagueResultSavingId] = useState(null);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -264,6 +267,12 @@ function App() {
     )}`;
   };
 
+  // 화면 표시용: 중복 정리용 내부 토큰은 숨긴다.
+  const formatEventContentForDisplay = (content) =>
+    String(content || "")
+      .replace(/\s*⟦vm:[^⟧]+⟧/g, "")
+      .trim();
+
   const monthStart = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
   const monthEnd = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 
@@ -323,7 +332,7 @@ function App() {
 
   const handleSelectDay = (d) => {
     setSelectedDate(d);
-    if (currentUser?.role === "teacher" && clubTab === "schedule") {
+    if (canCurrentTeacherEditSchedule(page.clubName) && clubTab === "schedule") {
       const ymd = toYmd(d);
       setEventEditorOpen(true);
       setEventEditorDate(ymd);
@@ -342,6 +351,15 @@ function App() {
     const parsed = parseHomeroom(studentId);
     if (!parsed) return "-";
     return `${parsed.grade}학년 ${parsed.cls}반`;
+  };
+
+  const formatDateTimeCompact = (isoLike) => {
+    const d = new Date(isoLike);
+    if (Number.isNaN(d.getTime())) return String(isoLike || "");
+    const pad2 = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(
+      d.getHours()
+    )}:${pad2(d.getMinutes())}`;
   };
 
   const loadApprovedStudents = async (clubId) => {
@@ -539,7 +557,10 @@ function App() {
 
   const handleAddEvent = async () => {
     setMainMsg("");
-    if (currentUser?.role !== "teacher") return;
+    if (!canCurrentTeacherEditSchedule(page.clubName)) {
+      setMainMsg("해당 종목의 담당 교사만 일정을 추가할 수 있습니다.");
+      return;
+    }
     if (!page.clubName) return;
     const club = getClubByName(page.clubName);
     if (!club) {
@@ -639,6 +660,13 @@ function App() {
   const normalizeClubName = (name) => (name || "").replace(/\s+/g, "").trim();
   const normalizeTeacherName = (name) =>
     (name || "").replace(/\s+/g, "").trim();
+  const splitTeacherNames = (teacherNameField) =>
+    String(teacherNameField || "")
+      .split(/[,/|]/)
+      .map((s) => normalizeTeacherName(s))
+      .filter(Boolean);
+  const isTeacherAssignedToClubRow = (clubRow, teacherNameNorm) =>
+    splitTeacherNames(clubRow?.teacher_name).includes(teacherNameNorm);
 
   const isSportStackingClub = (clubName) =>
     normalizeClubName(clubName) === normalizeClubName("스포츠 스태킹");
@@ -649,6 +677,20 @@ function App() {
   const isVLeagueAdmin =
     currentUser?.role === "teacher" &&
     normalizeTeacherName(currentUser?.name) === vLeagueAdminNameNorm;
+
+  const getClubHeaderTitle = (clubName) => {
+    if (!clubName) return "";
+    if (normalizeClubName(clubName) === normalizeClubName("컬러풀 스포츠")) {
+      return "여학생체육활성화 컬러풀 스포츠";
+    }
+    if (normalizeClubName(clubName) === normalizeClubName("티볼")) {
+      return "365+체육온활동 티볼 스포츠클럽";
+    }
+    if (isVLeagueClub(clubName)) {
+      return "교내 수준별스포츠리그 새샘 V리그";
+    }
+    return `${clubName} 스포츠클럽`;
+  };
 
   /** select('*'): DB에 wins/losses/rank_order 컬럼이 없어도 조회가 실패하지 않게 함 */
   const loadVLeagueClasses = useCallback(async (clubId) => {
@@ -724,6 +766,17 @@ function App() {
     return clubs.filter((club) => normalizeClubName(club.name) === n);
   };
 
+  const canCurrentTeacherEditSchedule = (clubName) => {
+    if (!currentUser || currentUser.role !== "teacher" || !clubName) return false;
+    const myNameN = normalizeTeacherName(currentUser.name);
+    if (isVLeagueClub(clubName)) {
+      return myNameN === vLeagueAdminNameNorm;
+    }
+    return getClubsByName(clubName).some(
+      (c) => isTeacherAssignedToClubRow(c, myNameN)
+    );
+  };
+
   /** Supabase clubs.name 과 앱 표기가 조금 달라도 같은 행이면 V리그로 인식 */
   const isVLeagueClub = (clubName) => {
     if (!clubName) return false;
@@ -768,6 +821,74 @@ function App() {
     }
     return map;
   }, [vLeagueClasses]);
+
+  const getComputedStandingsByLeague = useCallback(
+    (leagueKey) => {
+      const { malgeun, goun } = splitVLeagueClassesByGrade(vLeagueClasses || []);
+      const classes = leagueKey === "malgeun" ? malgeun : goun;
+      const teamMap = new Map();
+      for (const cls of classes) {
+        const nickname = String(cls.nickname || "").trim();
+        const displayName = nickname
+          ? `${nickname}(${cls.class_name})`
+          : cls.class_name;
+        teamMap.set(cls.id, {
+          class_id: cls.id,
+          team_name: displayName,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          points: 0,
+        });
+      }
+      const matches = (vLeagueMatches || []).filter(
+        (m) =>
+          m.league === leagueKey &&
+          m.status === "completed" &&
+          m.home_score != null &&
+          m.away_score != null
+      );
+      for (const m of matches) {
+        const home = teamMap.get(m.home_class_id);
+        const away = teamMap.get(m.away_class_id);
+        if (!home || !away) continue;
+        const hs = Number(m.home_score);
+        const as = Number(m.away_score);
+        if (!Number.isFinite(hs) || !Number.isFinite(as)) continue;
+        if (hs > as) {
+          home.wins += 1;
+          home.points += 3;
+          away.losses += 1;
+        } else if (hs < as) {
+          away.wins += 1;
+          away.points += 3;
+          home.losses += 1;
+        } else {
+          home.draws += 1;
+          away.draws += 1;
+          home.points += 1;
+          away.points += 1;
+        }
+      }
+      return [...teamMap.values()]
+        .sort((a, b) => {
+          if (b.points !== a.points) return b.points - a.points;
+          if (b.wins !== a.wins) return b.wins - a.wins;
+          if (a.losses !== b.losses) return a.losses - b.losses;
+          return String(a.team_name).localeCompare(String(b.team_name), "ko");
+        })
+        .map((row, idx) => ({ ...row, rank_order: idx + 1 }));
+    },
+    [vLeagueClasses, vLeagueMatches]
+  );
+
+  const vLeagueComputedStandings = useMemo(() => {
+    const classes =
+      vLeagueGradeTab === "malgeun"
+        ? getComputedStandingsByLeague("malgeun")
+        : getComputedStandingsByLeague("goun");
+    return classes;
+  }, [getComputedStandingsByLeague, vLeagueGradeTab]);
 
   const generateRoundRobin = (teams) => {
     const list = [...(teams || [])];
@@ -883,13 +1004,13 @@ function App() {
     }
     setVLeagueSavingMatches(true);
     try {
-      // 기존 동일 리그 대진표는 먼저 삭제 (간단/명확)
+      // 기존 동일 리그 대진표는 작성자와 무관하게 먼저 삭제
+      // (과거 데이터 created_by 값 차이로 중복 누적되는 문제 방지)
       const { error: delErr } = await supabase
         .from("vleague_matches")
         .delete()
         .eq("club_id", club.id)
-        .eq("league", vLeagueMatchesDraft.league)
-        .eq("created_by", vLeagueAdminNameNorm);
+        .eq("league", vLeagueMatchesDraft.league);
       if (delErr) {
         setMainMsg(`대진표 초기화 실패: ${delErr.message}`);
         return;
@@ -958,6 +1079,157 @@ function App() {
       await loadEventsForMonth(club.id, calendarMonth);
     } finally {
       setVLeaguePushingToCalendar(false);
+    }
+  };
+
+  const handleSyncVLeagueCalendarEvents = async () => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("일정 정리는 관리자(홍준영)만 가능합니다.");
+      return;
+    }
+    if (!page.clubName) return;
+    const club = getClubByName(page.clubName);
+    if (!club) return;
+
+    const rows = (vLeagueMatches || []).filter(
+      (m) => m.league === vLeagueGradeTab && Boolean(m.match_date) && Boolean(m.id)
+    );
+    if (rows.length === 0) {
+      setMainMsg("정리할 저장된 대진표가 없습니다. 먼저 대진표를 저장해 주세요.");
+      return;
+    }
+
+    const ok = window.confirm(
+      "선택한 리그의 경기 일정을 정리하고 현재 대진표 기준으로 다시 만들까요?\n\n- 기존 경기 일정(해당 리그)은 삭제됩니다.\n- 중복 일정이 정리됩니다."
+    );
+    if (!ok) return;
+
+    setVLeagueSyncingCalendar(true);
+    try {
+      const leagueLabel = vLeagueGradeTab === "malgeun" ? "맑은샘" : "고운샘";
+      const leaguePrefix = `[${leagueLabel}]`;
+      const matchTokenSet = new Set(
+        rows.map((m) => formatVLeagueMatchToken(m.id).trim()).filter(Boolean)
+      );
+
+      // 1) 해당 클럽 전체 일정에서 현재 리그 경기 일정만 찾아 삭제
+      const { data: allEvents, error: loadErr } = await supabase
+        .from("club_events")
+        .select("id, content")
+        .eq("club_id", club.id);
+      if (loadErr) {
+        setMainMsg(`기존 일정 조회 실패: ${loadErr.message}`);
+        return;
+      }
+
+      const deleteIds = (allEvents || [])
+        .filter((ev) => {
+          const content = String(ev.content || "");
+          if (!content.startsWith(leaguePrefix)) return false;
+          for (const token of matchTokenSet) {
+            if (content.includes(token)) return true;
+          }
+          // 토큰 없는 과거 형식도 같은 리그면 정리 대상에 포함
+          return true;
+        })
+        .map((ev) => ev.id);
+
+      if (deleteIds.length > 0) {
+        const { error: delErr } = await supabase
+          .from("club_events")
+          .delete()
+          .in("id", deleteIds);
+        if (delErr) {
+          setMainMsg(`기존 일정 삭제 실패: ${delErr.message}`);
+          return;
+        }
+      }
+
+      // 2) 현재 저장된 대진표 기준으로 일정 재생성
+      const payload = rows.map((m) => ({
+        club_id: club.id,
+        event_date: m.match_date,
+        content: formatVLeagueEventContent(m),
+        created_by: currentUser?.name || null,
+      }));
+      const { error: insErr } = await supabase.from("club_events").insert(payload);
+      if (insErr) {
+        setMainMsg(`일정 재생성 실패: ${insErr.message}`);
+        return;
+      }
+
+      setMainMsg(
+        `일정 중복 정리 완료: ${deleteIds.length}건 삭제, ${payload.length}건 재생성했습니다.`
+      );
+      await loadEventsForMonth(club.id, calendarMonth);
+    } finally {
+      setVLeagueSyncingCalendar(false);
+    }
+  };
+
+  const handleSaveVLeagueMatchResult = async (matchRow) => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("경기 결과 입력은 관리자(홍준영)만 가능합니다.");
+      return;
+    }
+    if (!page.clubName) return;
+    const club = getClubByName(page.clubName);
+    if (!club) return;
+    if (!matchRow?.id) {
+      setMainMsg("저장된 대진표에서만 경기 결과를 입력할 수 있습니다.");
+      return;
+    }
+    const draft = vLeagueResultDrafts[matchRow.id] || {};
+    const homeRaw = draft.home ?? matchRow.home_score ?? "";
+    const awayRaw = draft.away ?? matchRow.away_score ?? "";
+    const winRaw = draft.winScore ?? "";
+    const homeScore = Number(homeRaw);
+    const awayScore = Number(awayRaw);
+    const winScore = Number(winRaw);
+    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) {
+      setMainMsg("점수를 숫자로 입력해 주세요.");
+      return;
+    }
+    if (!Number.isFinite(winScore) || winScore <= 0) {
+      setMainMsg("경기별 승리 점수를 1 이상 숫자로 입력해 주세요.");
+      return;
+    }
+    if (homeScore < 0 || awayScore < 0) {
+      setMainMsg("점수는 0 이상이어야 합니다.");
+      return;
+    }
+    const homeWin = homeScore === winScore && awayScore !== winScore;
+    const awayWin = awayScore === winScore && homeScore !== winScore;
+    if (!homeWin && !awayWin) {
+      setMainMsg("한 팀만 '승리 점수'에 도달해야 결과를 저장할 수 있습니다.");
+      return;
+    }
+    setVLeagueResultSavingId(matchRow.id);
+    try {
+      const { error } = await supabase
+        .from("vleague_matches")
+        .update({
+          home_score: homeScore,
+          away_score: awayScore,
+          status: "completed",
+        })
+        .eq("id", matchRow.id)
+        .eq("club_id", club.id);
+      if (error) {
+        setMainMsg(`경기 결과 저장 실패: ${error.message}`);
+        return;
+      }
+      setMainMsg("경기 결과를 저장했습니다. 순위표가 자동 갱신됩니다.");
+      setVLeagueResultDrafts((prev) => {
+        const next = { ...prev };
+        delete next[matchRow.id];
+        return next;
+      });
+      await loadVLeagueMatches(club.id);
+    } finally {
+      setVLeagueResultSavingId(null);
     }
   };
 
@@ -1077,8 +1349,8 @@ function App() {
         ? vLeagueNickDrafts[row.id]
         : (row.nickname ?? "");
     const val = String(raw).trim();
-    if (val.length > 40) {
-      setMainMsg("별명은 40자 이내로 입력해 주세요.");
+    if (val.length > 10) {
+      setMainMsg("별명은 10자 이내로 입력해 주세요.");
       return;
     }
     setVLeagueNicknameSavingId(row.id);
@@ -1099,7 +1371,9 @@ function App() {
       )
     );
     setVLeagueNickDrafts((prev) => ({ ...prev, [row.id]: val }));
-    setMainMsg("별명이 저장되었습니다.");
+    // 별명 저장 직후 서버 데이터를 다시 읽어 순위표/참가학급에 즉시 반영
+    await loadVLeagueClasses(club.id);
+    setMainMsg("별명이 저장되었습니다. 순위표에도 바로 반영되었습니다.");
   };
 
   const getMyStatusForClub = (clubId) => myAppByClubId[clubId]?.status || null;
@@ -1263,7 +1537,7 @@ function App() {
 
     const myNameN = normalizeTeacherName(currentUser.name);
     const myClub =
-      clubCandidates.find((c) => normalizeTeacherName(c.teacher_name) === myNameN) ||
+      clubCandidates.find((c) => isTeacherAssignedToClubRow(c, myNameN)) ||
       null;
 
     if (!myClub) {
@@ -1565,8 +1839,21 @@ function App() {
                 ← 메인 화면
               </button>
               <div className="page-title">
-                {page.clubName}{" "}
-                {page.type === "clubManage" ? "관리 페이지" : "메인 페이지"}
+                {isVLeagueClub(page.clubName) ? (
+                  <span className="page-title-vleague">
+                    <span className="page-title-vleague-sub">
+                      수준별 교내스포츠리그
+                    </span>
+                    <span className="page-title-vleague-main">
+                      새샘 V리그
+                      {page.type === "clubManage" ? " 관리" : ""}
+                    </span>
+                  </span>
+                ) : page.type === "clubManage" ? (
+                  `${getClubHeaderTitle(page.clubName)} 관리`
+                ) : (
+                  getClubHeaderTitle(page.clubName)
+                )}
               </div>
             </div>
           )}
@@ -1574,12 +1861,13 @@ function App() {
           {page.type === "home" && (
             <div className="tabs-container">
               {[
+                V_LEAGUE_LABEL,
                 "배구",
                 "농구",
                 "스포츠 스태킹",
-                "육상",
                 "컬러풀 스포츠",
-                V_LEAGUE_LABEL,
+                "티볼",
+                "육상",
               ].map(
                 (name) => {
                   const isActive = selectedClubName === name;
@@ -1589,7 +1877,14 @@ function App() {
                       ? getMyStatusForClub(club.id)
                       : null;
                   return (
-                    <div key={name} className="sport-item">
+                    <div
+                      key={name}
+                      className={
+                        "sport-item" +
+                        (name === V_LEAGUE_LABEL ? " sport-item--wide" : "") +
+                        (name === "컬러풀 스포츠" ? " sport-item--compact" : "")
+                      }
+                    >
                       <div
                         className={isActive ? "sport-tab active" : "sport-tab"}
                         role="button"
@@ -1608,12 +1903,26 @@ function App() {
                             {name === "농구" && "🏀"}
                             {name === "육상" && "🏃‍♀️"}
                             {name === "컬러풀 스포츠" && "🎨"}
+                            {name === "티볼" && "⚾"}
                             {name === V_LEAGUE_LABEL && "🏐"}
                             {name === "스포츠 스태킹" && (
-                              <span className="stack-cup-icon" />
+                              <img
+                                className="sport-icon-image"
+                                src="/sport-stacking-icon.png"
+                                alt="스포츠 스태킹 아이콘"
+                              />
                             )}
                           </span>
-                          <span className="sport-name">{name}</span>
+                          <span
+                            className={
+                              "sport-name" +
+                              (name === "컬러풀 스포츠"
+                                ? " sport-name--compact"
+                                : "")
+                            }
+                          >
+                            {name}
+                          </span>
                         </div>
                         {name === V_LEAGUE_LABEL && (
                           <p className="sport-vleague-hint">
@@ -1795,11 +2104,9 @@ function App() {
                           ? "club-tab active"
                           : "club-tab"
                       }
-                      onClick={async () => {
+                      onClick={() => {
+                        setMainMsg("");
                         setClubTab("vStandings");
-                        const club = getClubByName(page.clubName);
-                        if (!club) return;
-                        await loadVLeagueStandings(club.id);
                       }}
                     >
                       순위표
@@ -1965,7 +2272,7 @@ function App() {
                         </>
                       )}
 
-                      {currentUser.role === "teacher" && (
+                      {canCurrentTeacherEditSchedule(page.clubName) && (
                         <div className="event-add">
                           <div className="event-add-title">
                             교사: 일정 추가 (달력 날짜를 클릭하세요)
@@ -2031,9 +2338,19 @@ function App() {
                               </div>
                             );
                           }
-                          return items.map((it) => (
+                          const orderedItems = [...items].sort((a, b) => {
+                            const aContent = String(a.content || "");
+                            const bContent = String(b.content || "");
+                            const rank = (txt) => {
+                              if (txt.startsWith("[맑은샘]")) return 0;
+                              if (txt.startsWith("[고운샘]")) return 1;
+                              return 2;
+                            };
+                            return rank(aContent) - rank(bContent);
+                          });
+                          return orderedItems.map((it) => (
                             <div key={it.id} className="activity-item">
-                              {it.content}
+                              {formatEventContentForDisplay(it.content)}
                             </div>
                           ));
                         })()}
@@ -2352,6 +2669,16 @@ function App() {
                             ? "반영 중..."
                             : "일정에 일괄 반영"}
                         </button>
+                        <button
+                          type="button"
+                          className="vleague-ghost"
+                          disabled={vLeagueSyncingCalendar}
+                          onClick={handleSyncVLeagueCalendarEvents}
+                        >
+                          {vLeagueSyncingCalendar
+                            ? "정리 중..."
+                            : "일정 중복 정리/재생성"}
+                        </button>
                       </div>
                       </div>
                     ) : (
@@ -2409,6 +2736,29 @@ function App() {
                           m.away_score != null
                             ? ` (${m.home_score}:${m.away_score})`
                             : "";
+                        const draft = vLeagueResultDrafts[m.id] || {};
+                        const homeInput = draft.home ?? (m.home_score ?? "");
+                        const awayInput = draft.away ?? (m.away_score ?? "");
+                        const winInput = draft.winScore ?? "";
+                        const homeNum = Number(homeInput);
+                        const awayNum = Number(awayInput);
+                        const winNum = Number(winInput);
+                        let winnerLabel = "";
+                        if (Number.isFinite(winNum) && winNum > 0) {
+                          if (
+                            Number.isFinite(homeNum) &&
+                            homeNum === winNum &&
+                            awayNum !== winNum
+                          ) {
+                            winnerLabel = `${homeName} 승`;
+                          } else if (
+                            Number.isFinite(awayNum) &&
+                            awayNum === winNum &&
+                            homeNum !== winNum
+                          ) {
+                            winnerLabel = `${awayName} 승`;
+                          }
+                        }
                         return (
                           <div key={`${m.league}-${m.round_no}-${m.match_no}`} className="vleague-match-row">
                             <div className="vleague-match-left">
@@ -2422,13 +2772,100 @@ function App() {
                               </div>
                             </div>
                             {isVLeagueAdmin && m.id && (
-                              <button
-                                type="button"
-                                className="vleague-match-postpone"
-                                onClick={() => handlePostponeMatchToEnd(m)}
-                              >
-                                맨 뒤로
-                              </button>
+                              <div className="vleague-match-actions">
+                                <div className="vleague-result-inputs">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    inputMode="numeric"
+                                    className="vleague-score-input vleague-win-input"
+                                    value={winInput}
+                                    onChange={(e) =>
+                                      setVLeagueResultDrafts((prev) => ({
+                                        ...prev,
+                                        [m.id]: {
+                                          home:
+                                            prev[m.id]?.home ??
+                                            (m.home_score ?? ""),
+                                          away:
+                                            prev[m.id]?.away ??
+                                            (m.away_score ?? ""),
+                                          winScore: e.target.value,
+                                        },
+                                      }))
+                                    }
+                                    placeholder="승리점수"
+                                    aria-label="승리 점수"
+                                  />
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    inputMode="numeric"
+                                    className="vleague-score-input"
+                                    value={
+                                      homeInput
+                                    }
+                                    onChange={(e) =>
+                                      setVLeagueResultDrafts((prev) => ({
+                                        ...prev,
+                                        [m.id]: {
+                                          home: e.target.value,
+                                          away:
+                                            prev[m.id]?.away ??
+                                            (m.away_score ?? ""),
+                                          winScore:
+                                            prev[m.id]?.winScore ?? "",
+                                        },
+                                      }))
+                                    }
+                                    aria-label="홈팀 점수"
+                                  />
+                                  <span className="vleague-score-sep">:</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    inputMode="numeric"
+                                    className="vleague-score-input"
+                                    value={
+                                      awayInput
+                                    }
+                                    onChange={(e) =>
+                                      setVLeagueResultDrafts((prev) => ({
+                                        ...prev,
+                                        [m.id]: {
+                                          home:
+                                            prev[m.id]?.home ??
+                                            (m.home_score ?? ""),
+                                          away: e.target.value,
+                                          winScore:
+                                            prev[m.id]?.winScore ?? "",
+                                        },
+                                      }))
+                                    }
+                                    aria-label="원정팀 점수"
+                                  />
+                                  <div className="vleague-winner-live">
+                                    {winnerLabel || "-"}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="vleague-result-save"
+                                    disabled={vLeagueResultSavingId === m.id}
+                                    onClick={() => handleSaveVLeagueMatchResult(m)}
+                                  >
+                                    {vLeagueResultSavingId === m.id
+                                      ? "저장 중..."
+                                      : "결과 저장"}
+                                  </button>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="vleague-match-postpone"
+                                  onClick={() => handlePostponeMatchToEnd(m)}
+                                >
+                                  맨 뒤로
+                                </button>
+                              </div>
                             )}
                             <div
                               className={
@@ -2545,8 +2982,8 @@ function App() {
                                     <input
                                       type="text"
                                       className="vleague-nick-input"
-                                      placeholder="학급 별명 (40자 이내)"
-                                      maxLength={40}
+                                      placeholder="학급 별명 (10자 이내)"
+                                      maxLength={10}
                                       value={nickVal}
                                       onChange={(e) =>
                                         setVLeagueNickDrafts((prev) => ({
@@ -2656,20 +3093,40 @@ function App() {
                   <div className="vleague-section-head">
                     <div className="vleague-section-title">순위표</div>
                     <p className="vleague-section-desc">
-                      팀(학급)별 순위입니다. 승·패·승점은 Supabase에서
-                      관리합니다.
+                      대진표에 입력한 경기 결과를 바탕으로 자동 계산됩니다.
                     </p>
+                  </div>
+                  <div className="vleague-grade-tabs">
+                    <button
+                      type="button"
+                      className={
+                        "vleague-grade-tab vleague-grade-tab--malgeun" +
+                        (vLeagueGradeTab === "malgeun" ? " active" : "")
+                      }
+                      onClick={() => setVLeagueGradeTab("malgeun")}
+                    >
+                      맑은샘 리그
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        "vleague-grade-tab vleague-grade-tab--goun" +
+                        (vLeagueGradeTab === "goun" ? " active" : "")
+                      }
+                      onClick={() => setVLeagueGradeTab("goun")}
+                    >
+                      고운샘 리그
+                    </button>
                   </div>
                   {vLeagueLoading && (
                     <div className="cal-loading">불러오는 중...</div>
                   )}
                   {!vLeagueLoading && (
                     <div className="vleague-standings-wrap">
-                      {vLeagueStandings.length === 0 ? (
+                      {vLeagueComputedStandings.length === 0 ? (
                         <div className="activity-empty">
-                          순위 데이터가 없습니다. (Supabase{" "}
-                          <code>vleague_standings</code> 테이블을 만들고
-                          데이터를 넣어 주세요.)
+                          순위 데이터가 없습니다. 대진표에서 경기 결과를 입력해
+                          주세요.
                         </div>
                       ) : (
                         <div className="vleague-standings-table-wrap">
@@ -2684,9 +3141,29 @@ function App() {
                               </tr>
                             </thead>
                             <tbody>
-                              {vLeagueStandings.map((row) => (
-                                <tr key={row.id}>
-                                  <td>{row.rank_order}</td>
+                              {vLeagueComputedStandings.map((row) => (
+                                <tr key={row.class_id}>
+                                  <td>
+                                    {row.rank_order <= 3 ? (
+                                      <span
+                                        className={
+                                          "vleague-rank-crown vleague-rank-crown--" +
+                                          row.rank_order
+                                        }
+                                      >
+                                        <span className="vleague-rank-crown-icon">
+                                          {row.rank_order === 1
+                                            ? "🥇"
+                                            : row.rank_order === 2
+                                              ? "🥈"
+                                              : "🥉"}
+                                        </span>
+                                        <span>{row.rank_order}위</span>
+                                      </span>
+                                    ) : (
+                                      row.rank_order
+                                    )}
+                                  </td>
                                   <td className="vleague-team-cell">
                                     {row.team_name}
                                   </td>
@@ -2987,11 +3464,13 @@ function App() {
                       <tbody>
                         {applications.map((app) => (
                           <tr key={app.id}>
-                            <td>{app[appCols.student_id]}</td>
-                            <td>{app[appCols.student_name]}</td>
-                            <td>{new Date(app.created_at).toLocaleString()}</td>
-                            <td>{app[appCols.status] || "pending"}</td>
-                            <td>
+                            <td data-label="학번">{app[appCols.student_id]}</td>
+                            <td data-label="이름">{app[appCols.student_name]}</td>
+                            <td data-label="신청 시간">
+                              {formatDateTimeCompact(app.created_at)}
+                            </td>
+                            <td data-label="상태">{app[appCols.status] || "pending"}</td>
+                            <td data-label="처리">
                               {((app[appCols.status] || "pending") === "pending") && (
                                 <div className="decision-buttons">
                                   <button
@@ -3038,8 +3517,15 @@ function App() {
     <div className="app-root">
       <header className="app-header first-screen">
         <div className="logo-badge">
-          <div className="ball-icon">🏀</div>
+          <div className="school-logo-frame">
+            <img
+              className="school-logo-icon"
+              src="/saesam-school-logo.png"
+              alt="전안새샘초등학교 로고"
+            />
+          </div>
           <div className="badge-text">
+            <span className="badge-subtitle">2026학년도</span>
             <span className="badge-title">새샘 스포츠클럽</span>
           </div>
         </div>

@@ -34,33 +34,56 @@ body {
 .logo-badge {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 18px;
+  gap: 16px;
+  padding: 16px 28px;
   border-radius: 999px;
   background: linear-gradient(135deg, #a5b4fc, #7dd3fc, #6ee7b7);
   box-shadow: 0 8px 18px rgba(129, 140, 248, 0.4);
 }
 
-.ball-icon {
-  width: 32px;
-  height: 32px;
+.school-logo-frame {
+  width: 60px;
+  height: 60px;
   border-radius: 999px;
-  display: flex;
+  overflow: hidden;
+  background: #ffffff;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
-  background: radial-gradient(circle at 30% 20%, #ffb74d, #f57c00);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.18);
+}
+
+.school-logo-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  transform: scale(1);
 }
 
 .badge-text {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
+  line-height: 1.05;
+}
+
+.badge-subtitle {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(17, 17, 17, 0.82);
+  margin-bottom: 3px;
+  letter-spacing: 0.02em;
 }
 
 .badge-title {
-  font-size: 18px;
+  font-size: 30px;
   font-weight: 800;
-  color: #ffffff;
+  color: #111111;
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.35),
+    0 3px 8px rgba(15, 23, 42, 0.28);
   font-family: "Jua", "Malgun Gothic", "Apple SD Gothic Neo", system-ui,
     sans-serif;
 }
@@ -235,24 +258,21 @@ body {
 .tabs-container {
   width: 100%;
   max-width: 980px;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  justify-content: center;
 }
 
 .sport-item {
-  flex: 1 1 calc(50% - 12px);
-  min-width: 220px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
 }
 
-.sport-item:nth-child(5),
-.sport-item:nth-child(6) {
-  flex-basis: 100%;
+.sport-item--wide {
+  grid-column: 1 / -1;
 }
 
 .sport-tab {
@@ -273,6 +293,7 @@ body {
   user-select: none;
   min-height: 128px;
   position: relative;
+  overflow: hidden;
 }
 
 .sport-tab:not(.active) {
@@ -286,27 +307,37 @@ body {
 
 /* 메인 종목 버튼 — 산뜻한 파스텔 배경 (활성 상태 제외) */
 .sport-item:nth-child(1) .sport-tab:not(.active) {
-  background: linear-gradient(145deg, #ffffff 0%, #e8f2ff 100%);
+  background: linear-gradient(145deg, #ffffff 0%, #d9d2ff 100%);
 }
 
 .sport-item:nth-child(2) .sport-tab:not(.active) {
-  background: linear-gradient(145deg, #ffffff 0%, #fff1e6 100%);
+  background: linear-gradient(145deg, #ffffff 0%, #cfe3ff 100%);
 }
 
 .sport-item:nth-child(3) .sport-tab:not(.active) {
-  background: linear-gradient(145deg, #ffffff 0%, #eafaf1 100%);
+  background: linear-gradient(145deg, #ffffff 0%, #ffd9bd 100%);
 }
 
 .sport-item:nth-child(4) .sport-tab:not(.active) {
-  background: linear-gradient(145deg, #ffffff 0%, #f0ecff 100%);
+  background: linear-gradient(145deg, #ffffff 0%, #ffe7a8 100%);
 }
 
 .sport-item:nth-child(5) .sport-tab:not(.active) {
-  background: linear-gradient(145deg, #ffffff 0%, #fff0f6 100%);
+  background: linear-gradient(145deg, #ffffff 0%, #ffd2e5 100%);
 }
 
 .sport-item:nth-child(6) .sport-tab:not(.active) {
-  background: linear-gradient(145deg, #ffffff 0%, #f3efff 100%);
+  background: linear-gradient(145deg, #ffffff 0%, #c9f3dd 100%);
+}
+
+.sport-item:nth-child(7) .sport-tab:not(.active) {
+  background: linear-gradient(145deg, #ffffff 0%, #c9f6ff 100%);
+}
+
+.sport-item--compact .sport-tab {
+  min-height: 112px;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 
 .sport-tab.active {
@@ -374,6 +405,26 @@ body {
   text-align: center;
 }
 
+.page-title-vleague {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1;
+}
+
+.page-title-vleague-sub {
+  font-size: 13px;
+  font-weight: 800;
+  color: #334155;
+}
+
+.page-title-vleague-main {
+  margin-top: 2px;
+  font-size: 22px;
+  font-weight: 900;
+  color: #0f172a;
+}
+
 .sport-tab:focus-visible {
   outline: 3px solid rgba(79, 70, 229, 0.35);
   outline-offset: 2px;
@@ -384,23 +435,45 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 
 .sport-icon {
-  font-size: 20px;
+  font-size: clamp(26px, 4.2vw, 38px);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  top: -5px;
 }
 
 .sport-name {
-  font-size: clamp(28px, 4.4vw, 44px);
+  font-size: clamp(24px, 3.8vw, 36px);
   font-weight: 900;
   letter-spacing: -0.2px;
   font-family: "Jua", "Malgun Gothic", "Apple SD Gothic Neo", system-ui,
     sans-serif;
+  line-height: 1.1;
+  max-width: 100%;
+  word-break: keep-all;
+  text-align: center;
 }
 
 .sport-tab.active .sport-name {
-  font-size: clamp(20px, 3.0vw, 30px);
-  font-weight: 800;
+  font-size: clamp(24px, 3.8vw, 36px);
+  font-weight: 900;
+}
+
+.sport-name--compact {
+  font-size: clamp(22px, 3.6vw, 34px);
+}
+
+@media (max-width: 720px) {
+  .tabs-container {
+    grid-template-columns: 1fr;
+  }
 }
 
 .sport-vleague-hint {
@@ -428,6 +501,14 @@ body {
   border: 2px solid #9ca3af;
   border-bottom-width: 4px;
   transform: rotate(180deg);
+}
+
+.sport-icon-image {
+  width: clamp(30px, 4.6vw, 42px);
+  height: clamp(30px, 4.6vw, 42px);
+  object-fit: contain;
+  display: block;
+  background: transparent;
 }
 
 .apply-btn {
@@ -1430,6 +1511,73 @@ body {
   white-space: nowrap;
 }
 
+.vleague-match-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.vleague-result-inputs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(248, 250, 252, 0.95);
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 999px;
+  padding: 5px 7px;
+}
+
+.vleague-score-input {
+  width: 54px;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 10px;
+  padding: 5px 6px;
+  font-size: 12px;
+  font-weight: 900;
+  color: #0f172a;
+  text-align: center;
+  background: #ffffff;
+}
+
+.vleague-win-input {
+  width: 78px;
+}
+
+.vleague-score-sep {
+  font-size: 12px;
+  font-weight: 900;
+  color: #64748b;
+}
+
+.vleague-winner-live {
+  min-width: 92px;
+  font-size: 12px;
+  font-weight: 900;
+  color: #0f172a;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.vleague-result-save {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  color: #0f172a;
+  background: linear-gradient(145deg, #ffffff 0%, #f1f5f9 100%);
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  white-space: nowrap;
+}
+
+.vleague-result-save:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
 .vleague-match-left {
   min-width: 0;
   text-align: left;
@@ -1471,6 +1619,18 @@ body {
   background: rgba(34, 197, 94, 0.12);
   border-color: rgba(34, 197, 94, 0.25);
   color: #166534;
+}
+
+@media (max-width: 760px) {
+  .vleague-match-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .vleague-match-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 .vleague-grade-tabs {
@@ -1799,11 +1959,47 @@ body {
 }
 
 .vleague-team-cell {
-  text-align: left !important;
+  text-align: center !important;
   font-weight: 900;
   color: #0f172a;
   max-width: 160px;
   word-break: keep-all;
+}
+
+.vleague-rank-crown {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+}
+
+.vleague-rank-crown-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.vleague-rank-crown--1 {
+  color: #78350f;
+  background: linear-gradient(145deg, #fef9c3 0%, #fde047 45%, #eab308 100%);
+  border-color: rgba(202, 138, 4, 0.55);
+}
+
+.vleague-rank-crown--2 {
+  color: #1e293b;
+  background: linear-gradient(145deg, #f8fafc 0%, #e2e8f0 45%, #cbd5e1 100%);
+  border-color: rgba(100, 116, 139, 0.45);
+}
+
+.vleague-rank-crown--3 {
+  color: #7c2d12;
+  background: linear-gradient(145deg, #ffedd5 0%, #fdba74 45%, #fb923c 100%);
+  border-color: rgba(194, 65, 12, 0.45);
 }
 
 .attendance-head {
@@ -2011,8 +2207,8 @@ body {
  * 위치만 바꿀 때는 아래 두 변수만 수정하세요.
  */
 .records-list {
-  --records-time-shift-x: -200px;
-  --records-who-shift-x: -200px;
+  --records-time-shift-x: 0px;
+  --records-who-shift-x: 0px;
 }
 
 .records-table {
@@ -2166,6 +2362,128 @@ body {
 }
 
 @media (max-width: 600px) {
+  .records-list {
+    /* 모바일에서는 강제 좌측 이동을 해제해 잘림을 방지 */
+    --records-time-shift-x: 0px;
+    --records-who-shift-x: 0px;
+  }
+
+  .records-row {
+    align-items: stretch;
+  }
+
+  .records-rank-wrap {
+    width: 44px;
+  }
+
+  .records-medal {
+    min-width: 40px;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  .records-rank-num {
+    min-width: 32px;
+    height: 32px;
+    font-size: 13px;
+  }
+
+  .records-mid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: 10px;
+    row-gap: 4px;
+  }
+
+  .records-time {
+    grid-column: 1 / -1;
+    justify-self: start;
+    font-size: 20px;
+    line-height: 1.05;
+  }
+
+  .records-who {
+    grid-column: 1 / -1;
+    justify-self: start;
+    text-align: left;
+    font-size: 14px;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 600px) {
+  .applications-panel.full {
+    padding: 12px 10px;
+    border-radius: 14px;
+  }
+
+  .applications-title {
+    font-size: 15px;
+    margin-bottom: 8px;
+  }
+
+  .applications-table {
+    margin-top: 10px;
+  }
+
+  .applications-table thead {
+    display: none;
+  }
+
+  .applications-table,
+  .applications-table tbody,
+  .applications-table tr,
+  .applications-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .applications-table tr {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+  }
+
+  .applications-table td {
+    border-bottom: none;
+    padding: 4px 0;
+    text-align: left;
+    font-size: 13px;
+  }
+
+  .applications-table td::before {
+    content: attr(data-label) " ";
+    color: #64748b;
+    font-weight: 800;
+    margin-right: 6px;
+  }
+
+  .decision-buttons {
+    margin-top: 4px;
+    gap: 6px;
+  }
+
+  .approve-btn,
+  .reject-btn {
+    width: 72px;
+    padding: 7px 10px;
+  }
+
+  .page-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .page-title {
+    position: static;
+    transform: none;
+    width: 100%;
+    text-align: left;
+  }
+
   .schedule-layout {
     grid-template-columns: 1fr;
   }
