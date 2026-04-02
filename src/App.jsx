@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import { supabase } from "./supabaseClient";
 import "./App.css";
 
@@ -21,6 +28,80 @@ function splitVLeagueClassesByGrade(list) {
       )
       .sort(sortFn),
   };
+}
+
+function parseHomeroomFromStudentId(studentId) {
+  const s = String(studentId || "");
+  if (!/^\d{6}$/.test(s)) return null;
+  const grade = Number(s.slice(0, 2));
+  const cls = Number(s.slice(2, 4));
+  return { grade, cls };
+}
+
+function formatClassNameFromStudentId(studentId) {
+  const parsed = parseHomeroomFromStudentId(studentId);
+  if (!parsed) return null;
+  return `${parsed.grade}학년 ${parsed.cls}반`;
+}
+
+function shortClassLabel(className) {
+  const s = String(className || "").trim();
+  const m = s.match(/^(\d+)\s*학년\s*(\d+)\s*반$/);
+  if (!m) return s;
+  return `${Number(m[1])}-${Number(m[2])}`;
+}
+
+/** 경기일(YYYY-MM-DD) 기준 로컬 시간: 전날 14:00 ~ 당일 13:00 직전까지 응원 작성·화면 노출 가능 */
+function getVLeagueCheerWindowForMatchDate(matchDateYmd) {
+  const ymd = String(matchDateYmd || "").slice(0, 10);
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!parts) return null;
+  const y = Number(parts[1]);
+  const mo = Number(parts[2]);
+  const d = Number(parts[3]);
+  const matchDay = new Date(y, mo - 1, d);
+  const dayBefore = new Date(matchDay);
+  dayBefore.setDate(dayBefore.getDate() - 1);
+  const start = new Date(
+    dayBefore.getFullYear(),
+    dayBefore.getMonth(),
+    dayBefore.getDate(),
+    14,
+    0,
+    0,
+    0
+  );
+  const end = new Date(y, mo - 1, d, 13, 0, 0, 0);
+  return { start, end };
+}
+
+function isNowInVLeagueCheerWindow(matchDateYmd) {
+  const w = getVLeagueCheerWindowForMatchDate(matchDateYmd);
+  if (!w) return false;
+  const now = new Date();
+  return now >= w.start && now < w.end;
+}
+
+/**
+ * 응원 글 표시: 해당 학급 경기의 응원 창(전날 14:00 ~ 당일 13:00 직전) 안에 작성되었고,
+ * 지금 시각도 그 같은 창 안일 때만 노출한다. (예: 4/3 경기 응원은 4/3 13:00 이후 목록에서 제외)
+ */
+function isVLeagueCheerVisibleNow(cheer, matches, now = new Date()) {
+  const classId = cheer.class_id;
+  const created = new Date(cheer.created_at);
+  if (classId == null || Number.isNaN(created.getTime())) return false;
+
+  for (const m of matches || []) {
+    if (!m.match_date) continue;
+    if (m.home_class_id !== classId && m.away_class_id !== classId) continue;
+    const ymd = String(m.match_date).slice(0, 10);
+    const w = getVLeagueCheerWindowForMatchDate(ymd);
+    if (!w) continue;
+    if (created >= w.start && created < w.end && now >= w.start && now < w.end) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function App() {
@@ -67,6 +148,21 @@ function App() {
   const [vLeagueSyncingCalendar, setVLeagueSyncingCalendar] = useState(false);
   const [vLeagueResultDrafts, setVLeagueResultDrafts] = useState({});
   const [vLeagueResultSavingId, setVLeagueResultSavingId] = useState(null);
+  const [vLeagueCheerDraft, setVLeagueCheerDraft] = useState("");
+  const [vLeagueCheers, setVLeagueCheers] = useState([]);
+  const [vLeagueCheerLoading, setVLeagueCheerLoading] = useState(false);
+  const [vLeagueCheerBoard, setVLeagueCheerBoard] = useState([]);
+  const [vLeagueCheerBoardIndex, setVLeagueCheerBoardIndex] = useState(0);
+  const [cheerStripNoTransition, setCheerStripNoTransition] = useState(false);
+  /** 전광판 슬라이드 높이(px) — 첫 슬롯 DOM 측정으로 rotator/transform과 일치 */
+  const [cheerSlidePx, setCheerSlidePx] = useState(64);
+  const cheerFirstSlideRef = useRef(null);
+  /** 응원 작성 가능 시각 창이 바뀌면 UI 갱신 */
+  const [cheerEligibilityTick, setCheerEligibilityTick] = useState(0);
+  const [vLeagueTodayMatches, setVLeagueTodayMatches] = useState({
+    malgeun: "",
+    goun: "",
+  });
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -114,6 +210,8 @@ function App() {
   const [errorMsg, setErrorMsg] = useState("");
 
   const TEACHER_JOIN_CODE = "saem2026";
+  const ADMIN_TEACHER_NAME = "홍준영";
+  const ADMIN_TEACHER_JOIN_CODE = "saem2026@!";
 
   const resetErrors = () => setErrorMsg("");
 
@@ -672,6 +770,10 @@ function App() {
     normalizeClubName(clubName) === normalizeClubName("스포츠 스태킹");
 
   const V_LEAGUE_LABEL = "새샘 V리그";
+  /** 동일 이름 클럽이 DB에 여러 개일 때, 실제 vleague_classes가 있는 클럽을 고릅니다. */
+  const V_LEAGUE_PRIMARY_CLUB_ID =
+    String(import.meta.env.VITE_VLEAGUE_PRIMARY_CLUB_ID || "").trim() ||
+    "ac9e1c37-b2c7-4ab6-9c79-667da9325aa8";
   const V_LEAGUE_ADMIN_TEACHER_NAME = "홍준영";
   const vLeagueAdminNameNorm = normalizeTeacherName(V_LEAGUE_ADMIN_TEACHER_NAME);
   const isVLeagueAdmin =
@@ -755,16 +857,29 @@ function App() {
   }, [isVLeagueAdmin, vLeagueAdminNameNorm]);
 
   const getClubByName = (name) => {
-    const exact = clubs.find((club) => club.name === name);
-    if (exact) return exact;
     const n = normalizeClubName(name);
-    return clubs.find((club) => normalizeClubName(club.name) === n) || null;
+    if (!n) return null;
+    const matches = clubs.filter(
+      (club) => normalizeClubName(club.name) === n
+    );
+    if (matches.length === 0) return null;
+    if (matches.length === 1) return matches[0];
+    if (n === normalizeClubName(V_LEAGUE_LABEL)) {
+      const pref = matches.find((c) => c.id === V_LEAGUE_PRIMARY_CLUB_ID);
+      if (pref) return pref;
+    }
+    return matches[0];
   };
 
   const getClubsByName = (name) => {
     const n = normalizeClubName(name);
     return clubs.filter((club) => normalizeClubName(club.name) === n);
   };
+
+  const myStudentClassName = useMemo(
+    () => formatClassNameFromStudentId(currentUser?.id),
+    [currentUser?.id]
+  );
 
   const canCurrentTeacherEditSchedule = (clubName) => {
     if (!currentUser || currentUser.role !== "teacher" || !clubName) return false;
@@ -813,6 +928,15 @@ function App() {
     loadVLeagueClasses,
     loadVLeagueMatches,
   ]);
+
+  useEffect(() => {
+    if (page.type !== "clubMain") return;
+    if (!isVLeagueClub(page.clubName)) return;
+    const club = getClubByName(page.clubName);
+    if (!club) return;
+    loadVLeagueClasses(club.id);
+    loadVLeagueMatches(club.id);
+  }, [page.type, page.clubName, clubs, loadVLeagueClasses, loadVLeagueMatches]);
 
   const vleagueClassNameById = useMemo(() => {
     const map = {};
@@ -889,6 +1013,244 @@ function App() {
         : getComputedStandingsByLeague("goun");
     return classes;
   }, [getComputedStandingsByLeague, vLeagueGradeTab]);
+
+  const myVLeagueClassRow = useMemo(() => {
+    if (currentUser?.role !== "student" || !myStudentClassName) return null;
+    return (
+      (vLeagueClasses || []).find(
+        (r) => normalizeClubName(r.class_name) === normalizeClubName(myStudentClassName)
+      ) || null
+    );
+  }, [currentUser?.role, myStudentClassName, vLeagueClasses]);
+
+  /** 학번으로 매칭된 학급의 경기일마다: 전날 14:00 ~ 당일 13:00 직전에만 작성 가능 */
+  const canWriteVLeagueCheerNow = useMemo(() => {
+    if (!myVLeagueClassRow?.id) return false;
+    for (const m of vLeagueMatches || []) {
+      if (!m.match_date) continue;
+      if (
+        m.home_class_id !== myVLeagueClassRow.id &&
+        m.away_class_id !== myVLeagueClassRow.id
+      ) {
+        continue;
+      }
+      const ymd = String(m.match_date).slice(0, 10);
+      if (isNowInVLeagueCheerWindow(ymd)) return true;
+    }
+    return false;
+  }, [myVLeagueClassRow, vLeagueMatches, cheerEligibilityTick]);
+
+  const visibleVLeagueCheers = useMemo(() => {
+    const now = new Date();
+    return (vLeagueCheers || []).filter((c) =>
+      isVLeagueCheerVisibleNow(c, vLeagueMatches, now)
+    );
+  }, [vLeagueCheers, vLeagueMatches, cheerEligibilityTick]);
+
+  const visibleVLeagueCheerBoard = useMemo(() => {
+    const now = new Date();
+    return (vLeagueCheerBoard || []).filter((c) =>
+      isVLeagueCheerVisibleNow(c, vLeagueMatches, now)
+    );
+  }, [vLeagueCheerBoard, vLeagueMatches, cheerEligibilityTick]);
+
+  useEffect(() => {
+    const id = window.setInterval(
+      () => setCheerEligibilityTick((t) => t + 1),
+      30000
+    );
+    return () => window.clearInterval(id);
+  }, []);
+
+  const loadVLeagueCheers = useCallback(async (clubId, classId = null) => {
+    if (!clubId) {
+      setVLeagueCheers([]);
+      return;
+    }
+    setVLeagueCheerLoading(true);
+    let query = supabase
+      .from("vleague_cheers")
+      .select("id, message, student_name, created_at, class_id")
+      .eq("club_id", clubId)
+      .order("created_at", { ascending: false })
+      .limit(150);
+    if (classId) query = query.eq("class_id", classId);
+    const { data, error } = await query;
+    setVLeagueCheerLoading(false);
+    if (error) {
+      setMainMsg(`응원 글 로딩 실패: ${error.message}`);
+      setVLeagueCheers([]);
+      return;
+    }
+    setVLeagueCheers(data || []);
+  }, []);
+
+  const loadVLeagueCheerBoard = useCallback(async () => {
+    const vLeagueClub = getClubByName(V_LEAGUE_LABEL);
+    if (!vLeagueClub?.id) {
+      setVLeagueCheerBoard([]);
+      setVLeagueCheerBoardIndex(0);
+      return;
+    }
+    await loadVLeagueMatches(vLeagueClub.id);
+    const { data, error } = await supabase
+      .from("vleague_cheers")
+      .select(
+        "id, class_id, message, student_name, created_at, class:vleague_classes(class_name)"
+      )
+      .eq("club_id", vLeagueClub.id)
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (error) {
+      setVLeagueCheerBoard([]);
+      setVLeagueCheerBoardIndex(0);
+      return;
+    }
+    setVLeagueCheerBoard(data || []);
+    setVLeagueCheerBoardIndex(0);
+  }, [clubs, loadVLeagueMatches]);
+
+  const loadVLeagueTodayMatchText = useCallback(async () => {
+    const vLeagueClub = getClubByName(V_LEAGUE_LABEL);
+    if (!vLeagueClub?.id) {
+      setVLeagueTodayMatches({ malgeun: "", goun: "" });
+      return;
+    }
+    const today = toYmd(new Date());
+    const { data: classes } = await supabase
+      .from("vleague_classes")
+      .select("id, class_name")
+      .eq("club_id", vLeagueClub.id);
+    const classMap = new Map((classes || []).map((c) => [c.id, c.class_name]));
+    const { data: matches, error } = await supabase
+      .from("vleague_matches")
+      .select("home_class_id, away_class_id, match_date, league")
+      .eq("club_id", vLeagueClub.id)
+      .eq("match_date", today)
+      .order("match_no", { ascending: true })
+      .limit(100);
+    if (error || !matches || matches.length === 0) {
+      setVLeagueTodayMatches({ malgeun: "", goun: "" });
+      return;
+    }
+    const firstMalgeun = matches.find((m) => m.league === "malgeun") || null;
+    const firstGoun = matches.find((m) => m.league === "goun") || null;
+    const toMatchText = (m, leagueLabel) => {
+      if (!m) return "";
+      const home = shortClassLabel(classMap.get(m.home_class_id) || "학급");
+      const away = shortClassLabel(classMap.get(m.away_class_id) || "학급");
+      return `[${leagueLabel}] ${home} VS ${away}`;
+    };
+    setVLeagueTodayMatches({
+      malgeun: toMatchText(firstMalgeun, "맑은샘"),
+      goun: toMatchText(firstGoun, "고운샘"),
+    });
+  }, [clubs]);
+
+  useEffect(() => {
+    loadVLeagueCheerBoard();
+  }, [loadVLeagueCheerBoard]);
+
+  useEffect(() => {
+    loadVLeagueTodayMatchText();
+  }, [loadVLeagueTodayMatchText]);
+
+  useEffect(() => {
+    if (visibleVLeagueCheerBoard.length <= 1) return;
+    const timer = setInterval(() => {
+      setVLeagueCheerBoardIndex((prev) => {
+        const len = visibleVLeagueCheerBoard.length;
+        if (len <= 1) return prev;
+        const next = (prev + 1) % len;
+        if (next === 0 && prev === len - 1) {
+          setCheerStripNoTransition(true);
+        }
+        return next;
+      });
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [visibleVLeagueCheerBoard.length]);
+
+  useEffect(() => {
+    if (visibleVLeagueCheerBoard.length === 0) {
+      setVLeagueCheerBoardIndex(0);
+      return;
+    }
+    setVLeagueCheerBoardIndex((prev) =>
+      prev >= visibleVLeagueCheerBoard.length ? 0 : prev
+    );
+  }, [visibleVLeagueCheerBoard.length]);
+
+  useEffect(() => {
+    if (!cheerStripNoTransition) return;
+    const t = window.setTimeout(() => setCheerStripNoTransition(false), 24);
+    return () => clearTimeout(t);
+  }, [cheerStripNoTransition]);
+
+  useLayoutEffect(() => {
+    const el = cheerFirstSlideRef.current;
+    if (!el || visibleVLeagueCheerBoard.length === 0) return;
+    const apply = () => {
+      const h = Math.round(el.getBoundingClientRect().height);
+      if (h > 0) setCheerSlidePx((prev) => (prev === h ? prev : h));
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [visibleVLeagueCheerBoard]);
+
+  useEffect(() => {
+    if (page.type !== "clubMain" || clubTab !== "vCheer") return;
+    if (!isVLeagueClub(page.clubName)) return;
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
+    loadVLeagueMatches(club.id);
+    loadVLeagueCheers(club.id);
+  }, [page.type, clubTab, page.clubName, clubs, loadVLeagueCheers, loadVLeagueMatches]);
+
+  const handleCreateVLeagueCheer = async () => {
+    setMainMsg("");
+    if (currentUser?.role !== "student") return;
+    if (!myVLeagueClassRow?.id) {
+      setMainMsg("소속 학급 정보를 찾을 수 없습니다.");
+      return;
+    }
+    if (!canWriteVLeagueCheerNow) {
+      setMainMsg(
+        "응원 글은 우리 반 경기 전날 오후 2시부터, 당일 오후 1시 전까지만 남길 수 있습니다."
+      );
+      return;
+    }
+    const msg = String(vLeagueCheerDraft || "").trim();
+    if (!msg) {
+      setMainMsg("응원 메시지를 입력해 주세요.");
+      return;
+    }
+    if (msg.length > 25) {
+      setMainMsg("응원 메시지는 25자 이내로 입력해 주세요.");
+      return;
+    }
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
+    const { error } = await supabase.from("vleague_cheers").insert([
+      {
+        club_id: club.id,
+        class_id: myVLeagueClassRow.id,
+        student_id: currentUser.id,
+        student_name: currentUser.name,
+        message: msg,
+      },
+    ]);
+    if (error) {
+      setMainMsg(`응원 글 저장 실패: ${error.message}`);
+      return;
+    }
+    setVLeagueCheerDraft("");
+    await loadVLeagueCheers(club.id, myVLeagueClassRow.id);
+    await loadVLeagueCheerBoard();
+    setMainMsg("우리 반 응원 글을 등록했습니다.");
+  };
 
   const generateRoundRobin = (teams) => {
     const list = [...(teams || [])];
@@ -1762,17 +2124,28 @@ function App() {
       return;
     }
 
-    if (teacherCodeLogin !== TEACHER_JOIN_CODE) {
-      setErrorMsg("가입 코드가 올바르지 않습니다.");
+    const teacherNameTrimmed = teacherLoginName.trim();
+    const teacherNameNorm = normalizeTeacherName(teacherNameTrimmed);
+    const isAdminTeacher = teacherNameNorm === normalizeTeacherName(ADMIN_TEACHER_NAME);
+    const expectedCode = isAdminTeacher
+      ? ADMIN_TEACHER_JOIN_CODE
+      : TEACHER_JOIN_CODE;
+    if (teacherCodeLogin !== expectedCode) {
+      setErrorMsg(
+        isAdminTeacher
+          ? "교사 전용 가입 코드가 올바르지 않습니다."
+          : "가입 코드가 올바르지 않습니다."
+      );
       return;
     }
 
-    // 이미 존재하는 교사면 insert 없이 로그인 처리 (중복/유니크 제약 오류 방지)
-    const { data: existingTeacher, error: checkError } = await supabase
+    // 이미 존재하는 교사면 insert 없이 로그인 처리
+    // (과거 중복 데이터가 있어도 로그인 가능하도록 maybeSingle 대신 목록 조회)
+    const { data: existingTeachers, error: checkError } = await supabase
       .from("teachers")
       .select("id, name")
-      .eq("name", teacherLoginName.trim())
-      .maybeSingle();
+      .eq("name", teacherNameTrimmed)
+      .limit(1);
 
     if (checkError) {
       console.error(checkError);
@@ -1780,10 +2153,10 @@ function App() {
       return;
     }
 
-    if (!existingTeacher) {
+    if (!existingTeachers || existingTeachers.length === 0) {
       const { error: insertError } = await supabase.from("teachers").insert([
         {
-          name: teacherLoginName.trim(),
+          name: teacherNameTrimmed,
         },
       ]);
 
@@ -1796,7 +2169,7 @@ function App() {
 
     setCurrentUser({
       role: "teacher",
-      name: teacherLoginName.trim(),
+      name: teacherNameTrimmed,
     });
 
     setTeacherLoginName("");
@@ -1881,8 +2254,7 @@ function App() {
                       key={name}
                       className={
                         "sport-item" +
-                        (name === V_LEAGUE_LABEL ? " sport-item--wide" : "") +
-                        (name === "컬러풀 스포츠" ? " sport-item--compact" : "")
+                        (name === V_LEAGUE_LABEL ? " sport-item--wide" : "")
                       }
                     >
                       <div
@@ -1925,30 +2297,191 @@ function App() {
                           </span>
                         </div>
                         {name === V_LEAGUE_LABEL && (
-                          <p className="sport-vleague-hint">
-                            승인없이 바로 입장할 수 있습니다.
-                          </p>
+                          <>
+                            <div className="sport-vleague-board-head">
+                              <span className="sport-vleague-board-head-title">
+                                오늘 경기
+                              </span>
+                              <div className="sport-vleague-board-head-list">
+                                <span
+                                  className={
+                                    "sport-vleague-board-head-item sport-vleague-board-head-item--malgeun" +
+                                    (String(vLeagueTodayMatches.malgeun || "").trim()
+                                      ? " sport-vleague-board-head-item--has-match"
+                                      : "")
+                                  }
+                                >
+                                  {String(vLeagueTodayMatches.malgeun || "").trim() ? (
+                                    <span
+                                      className="sport-vleague-board-head-star"
+                                      aria-hidden
+                                    >
+                                      ★
+                                    </span>
+                                  ) : null}
+                                  <span className="sport-vleague-board-head-item-text">
+                                    {vLeagueTodayMatches.malgeun || "[맑은샘] 없음"}
+                                  </span>
+                                </span>
+                                <span
+                                  className={
+                                    "sport-vleague-board-head-item sport-vleague-board-head-item--goun" +
+                                    (String(vLeagueTodayMatches.goun || "").trim()
+                                      ? " sport-vleague-board-head-item--has-match"
+                                      : "")
+                                  }
+                                >
+                                  {String(vLeagueTodayMatches.goun || "").trim() ? (
+                                    <span
+                                      className="sport-vleague-board-head-star"
+                                      aria-hidden
+                                    >
+                                      ★
+                                    </span>
+                                  ) : null}
+                                  <span className="sport-vleague-board-head-item-text">
+                                    {vLeagueTodayMatches.goun || "[고운샘] 없음"}
+                                  </span>
+                                </span>
+                              </div>
+                            </div>
+                            <div className="sport-vleague-board-wrap">
+                              <div
+                                id="vleague-home-cheer-cap-label"
+                                className="sport-vleague-board-top-badge"
+                              >
+                                <span
+                                  className="sport-vleague-board-top-badge-ico"
+                                  aria-hidden
+                                >
+                                  📣
+                                </span>
+                                <span className="sport-vleague-board-top-badge-txt">
+                                  우리반 응원하기
+                                </span>
+                              </div>
+                              <div
+                                className="sport-vleague-board"
+                                role="region"
+                                aria-labelledby="vleague-home-cheer-cap-label"
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                              >
+                              {visibleVLeagueCheerBoard.length === 0 ? (
+                                <span className="sport-vleague-board-empty">
+                                  {!vLeagueTodayMatches.malgeun &&
+                                  !vLeagueTodayMatches.goun
+                                    ? "오늘은 경기가 없습니다."
+                                    : currentUser?.role === "student"
+                                      ? "아직 응원이 없어요 · 아래에서 첫 응원 남기기"
+                                      : "아직 응원이 없어요"}
+                                </span>
+                              ) : (
+                                <div
+                                  className="sport-vleague-board-rotator"
+                                  aria-live="polite"
+                                  style={
+                                    {
+                                      "--sport-vleague-slide-h": `${cheerSlidePx}px`,
+                                    }
+                                  }
+                                >
+                                  <div
+                                    className={
+                                      "sport-vleague-board-strip" +
+                                      (cheerStripNoTransition
+                                        ? " sport-vleague-board-strip--no-transition"
+                                        : "")
+                                    }
+                                    style={{
+                                      transform: `translate3d(0, -${
+                                        vLeagueCheerBoardIndex * cheerSlidePx
+                                      }px, 0)`,
+                                      transition: cheerStripNoTransition
+                                        ? "none"
+                                        : "transform 0.55s cubic-bezier(0.33, 1, 0.35, 1)",
+                                    }}
+                                  >
+                                    {visibleVLeagueCheerBoard.map((row, slideIdx) => {
+                                      const cn =
+                                        row?.class?.class_name || "학급";
+                                      return (
+                                        <div
+                                          key={row.id}
+                                          ref={
+                                            slideIdx === 0
+                                              ? cheerFirstSlideRef
+                                              : undefined
+                                          }
+                                          className="sport-vleague-board-slide"
+                                        >
+                                          <div className="sport-vleague-board-line">
+                                            <span className="sport-vleague-board-msg">
+                                              <span className="sport-vleague-board-cheer-kicker">
+                                                응원
+                                              </span>
+                                              <span className="sport-vleague-board-msg-core">
+                                                [{cn}] {row.message}
+                                              </span>
+                                            </span>
+                                            <span
+                                              className="sport-vleague-board-author"
+                                              title={row.student_name || ""}
+                                            >
+                                              {row.student_name || "—"}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                              </div>
+                            </div>
+                          </>
                         )}
 
                         {currentUser.role === "student" && (
                           <>
                             {isVLeagueClub(name) ? (
-                              <button
-                                type="button"
+                              <div
                                 className={
-                                  isActive ? "enter-btn" : "enter-btn hidden"
+                                  isActive
+                                    ? "vleague-student-actions"
+                                    : "vleague-student-actions hidden"
                                 }
-                                disabled={!isActive}
-                                tabIndex={isActive ? 0 : -1}
-                                aria-hidden={!isActive}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (!isActive) return;
-                                  handleEnterClub(name);
-                                }}
                               >
-                                종목 페이지 입장하기
-                              </button>
+                                <button
+                                  type="button"
+                                  className="teacher-btn"
+                                  disabled={!isActive}
+                                  tabIndex={isActive ? 0 : -1}
+                                  aria-hidden={!isActive}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isActive) return;
+                                    handleEnterClub(name);
+                                  }}
+                                >
+                                  종목 페이지 입장하기
+                                </button>
+                                <button
+                                  type="button"
+                                  className="teacher-btn"
+                                  disabled={!isActive}
+                                  tabIndex={isActive ? 0 : -1}
+                                  aria-hidden={!isActive}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isActive) return;
+                                    handleEnterClub(name);
+                                    setClubTab("vCheer");
+                                  }}
+                                >
+                                  응원 메시지 작성하기
+                                </button>
+                              </div>
                             ) : (
                               <>
                                 {myStatus === "pending" && (
@@ -2055,6 +2588,19 @@ function App() {
                             >
                               관리페이지
                             </button>
+                            {isVLeagueClub(name) && (
+                              <button
+                                type="button"
+                                className="teacher-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  goTeacherMain(name);
+                                  setClubTab("vCheer");
+                                }}
+                              >
+                                우리반 응원하기
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -3178,6 +3724,70 @@ function App() {
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {clubTab === "vCheer" && isVLeagueClub(page.clubName) && (
+                <div className="club-page-body">
+                  <div className="vleague-section-head">
+                    <div className="vleague-section-title">우리반 응원하기</div>
+                  </div>
+                  <div className="vleague-cheer-wrap">
+                    {currentUser.role === "student" ? (
+                      myVLeagueClassRow && canWriteVLeagueCheerNow ? (
+                        <>
+                          <div className="vleague-cheer-head">
+                            {myVLeagueClassRow.class_name} 응원 메시지 작성
+                          </div>
+                          <div className="vleague-cheer-form">
+                            <input
+                              type="text"
+                              className="vleague-cheer-input"
+                              maxLength={25}
+                              placeholder="응원 메시지 입력 (25자 이내)"
+                              value={vLeagueCheerDraft}
+                              onChange={(e) => setVLeagueCheerDraft(e.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className="vleague-cheer-save"
+                              onClick={handleCreateVLeagueCheer}
+                            >
+                              등록
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="vleague-cheer-head">
+                          {myVLeagueClassRow
+                            ? "응원 글은 우리 반 경기가 있는 날 기준, 전날 오후 2시부터 당일 오후 1시 전까지만 작성할 수 있습니다."
+                            : "응원 글은 볼 수 있습니다. 작성은 학번으로 확인된 소속 학급이 V리그 참가 학급으로 등록된 학생만 가능합니다."}
+                        </div>
+                      )
+                    ) : (
+                      <div className="vleague-cheer-head">
+                        교사는 응원 글 조회만 가능합니다.
+                      </div>
+                    )}
+                    {vLeagueCheerLoading ? (
+                      <div className="cal-loading">응원 글 불러오는 중...</div>
+                    ) : visibleVLeagueCheers.length === 0 ? (
+                      <div className="activity-empty">등록된 응원 메시지가 없습니다.</div>
+                    ) : (
+                      <div className="vleague-cheer-list">
+                        {visibleVLeagueCheers.map((row) => (
+                          <div key={row.id} className="vleague-cheer-item">
+                            <div className="vleague-cheer-msg">{row.message}</div>
+                            <div className="vleague-cheer-meta">
+                              {(vLeagueClasses.find((c) => c.id === row.class_id)?.class_name ||
+                                "학급")}{" "}
+                              · {row.student_name} · {formatDateTimeCompact(row.created_at)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
