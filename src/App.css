@@ -78,14 +78,11 @@ body {
 }
 
 .badge-title {
-  font-size: 30px;
+  font-size: 24px;
   font-weight: 800;
-  color: #111111;
-  text-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.35),
-    0 3px 8px rgba(15, 23, 42, 0.28);
-  font-family: "Jua", "Malgun Gothic", "Apple SD Gothic Neo", system-ui,
-    sans-serif;
+  color: rgba(17, 17, 17, 0.82);
+  letter-spacing: 0.02em;
+  font-family: inherit;
 }
 
 .app-title {
@@ -130,7 +127,16 @@ body {
 .first-screen-main {
   padding-top: 0;
   margin-top: 8px;
-  margin-bottom: 24px;
+  margin-bottom: 8px;
+}
+
+.auth-version-footer {
+  text-align: center;
+  padding: 8px 16px 28px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  letter-spacing: 0.04em;
 }
 
 /* 로그인/회원가입 카드 */

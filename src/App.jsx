@@ -7,6 +7,7 @@ import React, {
   useRef,
 } from "react";
 import { supabase } from "./supabaseClient";
+import { APP_RELEASE_VERSION } from "./version";
 import "./App.css";
 
 /** 참가 학급: class_name이 5학년 → 맑은샘, 6학년 → 고운샘 */
@@ -4294,6 +4295,9 @@ function App() {
           )}
         </div>
       </main>
+      <footer className="auth-version-footer" aria-label="앱 배포 버전">
+        {APP_RELEASE_VERSION} ver
+      </footer>
     </div>
   );
 }
