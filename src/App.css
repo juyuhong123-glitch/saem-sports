@@ -307,6 +307,26 @@ body {
     color 0.2s ease;
 }
 
+/* 새샘 V리그: 선택 전에는 아이콘·제목만 — 카드 높이 축소 */
+.sport-tab--vleague-collapsed {
+  min-height: 96px;
+  padding: 10px 14px 12px;
+  gap: 8px;
+  /* 부제가 pill 밖으로 잘리지 않도록 (기본 .sport-tab 은 overflow:hidden) */
+  overflow: visible;
+}
+
+.sport-tab-vleague-subline {
+  display: block;
+  font-size: clamp(12px, 3vw, 14px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgba(51, 65, 85, 0.88);
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .sport-tab:not(.active) {
   transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
@@ -520,6 +540,42 @@ body {
   gap: 8px;
   flex-wrap: wrap;
   max-width: 100%;
+}
+
+/* 접힌 V리그: 아이콘을 '제목 + 부제' 블록 세로 중앙에 배치 */
+.sport-tab-title--vleague {
+  align-items: center;
+}
+
+.sport-tab-title--vleague .sport-icon {
+  top: 0;
+  align-self: center;
+}
+
+.sport-tab-title-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* 새샘 V리그 접힘: 부제는 한 줄, 제목 블록 중심 기준 가운데 */
+.sport-tab-title-main--vleague {
+  position: relative;
+  display: inline-block;
+  padding-bottom: 9px;
+  overflow: visible;
+}
+
+.sport-tab-title-main--vleague .sport-tab-vleague-subline {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  margin-top: 0;
+  padding-top: 0;
+  transform: translate(-50%, -0.32em);
+  white-space: nowrap;
+  text-align: center;
+  box-sizing: border-box;
 }
 
 .sport-icon {

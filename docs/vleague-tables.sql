@@ -67,3 +67,7 @@ create table if not exists public.vleague_standings (
 --    update public.vleague_classes
 --    set club_id = '올바른_uuid'
 --    where club_id = '잘못_넣었던_uuid';
+
+-- === vleague_cheers: 담임 교사 응원 글은 student_id 없이 저장할 수 있어야 합니다. ===
+-- (이미 테이블이 있고 student_id 가 NOT NULL 이면 아래 한 줄 실행)
+-- alter table public.vleague_cheers alter column student_id drop not null;

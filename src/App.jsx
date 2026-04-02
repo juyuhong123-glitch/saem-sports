@@ -1024,14 +1024,35 @@ function App() {
     );
   }, [currentUser?.role, myStudentClassName, vLeagueClasses]);
 
-  /** 학번으로 매칭된 학급의 경기일마다: 전날 14:00 ~ 당일 13:00 직전에만 작성 가능 */
+  /** vleague_classes.homeroom_teacher_name 과 로그인 교사 이름이 일치하는 학급 (담임 응원용) */
+  const myTeacherVLeagueHomeroomRow = useMemo(() => {
+    if (currentUser?.role !== "teacher" || !currentUser?.name) return null;
+    const myN = normalizeTeacherName(currentUser.name);
+    const list = (vLeagueClasses || []).filter((r) => {
+      const t = r.homeroom_teacher_name;
+      if (!t || !String(t).trim()) return false;
+      return normalizeTeacherName(String(t)) === myN;
+    });
+    if (list.length === 0) return null;
+    list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    return list[0];
+  }, [currentUser?.role, currentUser?.name, vLeagueClasses]);
+
+  /** 학생: 학번 학급 / 교사: 담임 학급 — 응원 작성 대상 행 */
+  const vLeagueCheerWriterClassRow = useMemo(() => {
+    if (currentUser?.role === "student") return myVLeagueClassRow;
+    if (currentUser?.role === "teacher") return myTeacherVLeagueHomeroomRow;
+    return null;
+  }, [currentUser?.role, myVLeagueClassRow, myTeacherVLeagueHomeroomRow]);
+
+  /** 해당 학급 경기일마다: 전날 14:00 ~ 당일 13:00 직전에만 작성 가능 */
   const canWriteVLeagueCheerNow = useMemo(() => {
-    if (!myVLeagueClassRow?.id) return false;
+    if (!vLeagueCheerWriterClassRow?.id) return false;
     for (const m of vLeagueMatches || []) {
       if (!m.match_date) continue;
       if (
-        m.home_class_id !== myVLeagueClassRow.id &&
-        m.away_class_id !== myVLeagueClassRow.id
+        m.home_class_id !== vLeagueCheerWriterClassRow.id &&
+        m.away_class_id !== vLeagueCheerWriterClassRow.id
       ) {
         continue;
       }
@@ -1039,7 +1060,7 @@ function App() {
       if (isNowInVLeagueCheerWindow(ymd)) return true;
     }
     return false;
-  }, [myVLeagueClassRow, vLeagueMatches, cheerEligibilityTick]);
+  }, [vLeagueCheerWriterClassRow, vLeagueMatches, cheerEligibilityTick]);
 
   const visibleVLeagueCheers = useMemo(() => {
     const now = new Date();
@@ -1212,9 +1233,13 @@ function App() {
 
   const handleCreateVLeagueCheer = async () => {
     setMainMsg("");
-    if (currentUser?.role !== "student") return;
-    if (!myVLeagueClassRow?.id) {
-      setMainMsg("소속 학급 정보를 찾을 수 없습니다.");
+    if (currentUser?.role !== "student" && currentUser?.role !== "teacher") return;
+    if (!vLeagueCheerWriterClassRow?.id) {
+      setMainMsg(
+        currentUser.role === "teacher"
+          ? "참가 학급에 담임으로 등록된 학급이 없거나, 담임 이름이 일치하지 않습니다."
+          : "소속 학급 정보를 찾을 수 없습니다."
+      );
       return;
     }
     if (!canWriteVLeagueCheerNow) {
@@ -1234,21 +1259,26 @@ function App() {
     }
     const club = getClubByName(page.clubName);
     if (!club?.id) return;
-    const { error } = await supabase.from("vleague_cheers").insert([
-      {
-        club_id: club.id,
-        class_id: myVLeagueClassRow.id,
-        student_id: currentUser.id,
-        student_name: currentUser.name,
-        message: msg,
-      },
-    ]);
+    const studentName =
+      currentUser.role === "teacher"
+        ? `${shortClassLabel(vLeagueCheerWriterClassRow.class_name)} 선생님`
+        : currentUser.name;
+    const cheerInsert = {
+      club_id: club.id,
+      class_id: vLeagueCheerWriterClassRow.id,
+      student_name: studentName,
+      message: msg,
+    };
+    if (currentUser.role === "student" && currentUser.id) {
+      cheerInsert.student_id = currentUser.id;
+    }
+    const { error } = await supabase.from("vleague_cheers").insert([cheerInsert]);
     if (error) {
       setMainMsg(`응원 글 저장 실패: ${error.message}`);
       return;
     }
     setVLeagueCheerDraft("");
-    await loadVLeagueCheers(club.id, myVLeagueClassRow.id);
+    await loadVLeagueCheers(club.id, vLeagueCheerWriterClassRow.id);
     await loadVLeagueCheerBoard();
     setMainMsg("우리 반 응원 글을 등록했습니다.");
   };
@@ -2259,7 +2289,12 @@ function App() {
                       }
                     >
                       <div
-                        className={isActive ? "sport-tab active" : "sport-tab"}
+                        className={
+                          (isActive ? "sport-tab active" : "sport-tab") +
+                          (name === V_LEAGUE_LABEL && !isActive
+                            ? " sport-tab--vleague-collapsed"
+                            : "")
+                        }
                         role="button"
                         tabIndex={0}
                         onClick={() => handleSelectClub(name)}
@@ -2270,7 +2305,14 @@ function App() {
                           }
                         }}
                       >
-                        <div className="sport-tab-title">
+                        <div
+                          className={
+                            "sport-tab-title" +
+                            (name === V_LEAGUE_LABEL && !isActive
+                              ? " sport-tab-title--vleague"
+                              : "")
+                          }
+                        >
                           <span className="sport-icon">
                             {name === "배구" && "🏐"}
                             {name === "농구" && "🏀"}
@@ -2286,18 +2328,32 @@ function App() {
                               />
                             )}
                           </span>
-                          <span
+                          <div
                             className={
-                              "sport-name" +
-                              (name === "컬러풀 스포츠"
-                                ? " sport-name--compact"
+                              "sport-tab-title-main" +
+                              (name === V_LEAGUE_LABEL && !isActive
+                                ? " sport-tab-title-main--vleague"
                                 : "")
                             }
                           >
-                            {name}
-                          </span>
+                            <span
+                              className={
+                                "sport-name" +
+                                (name === "컬러풀 스포츠"
+                                  ? " sport-name--compact"
+                                  : "")
+                              }
+                            >
+                              {name}
+                            </span>
+                            {name === V_LEAGUE_LABEL && !isActive && (
+                              <span className="sport-tab-vleague-subline">
+                                -수준별 교내스포츠리그-
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        {name === V_LEAGUE_LABEL && (
+                        {name === V_LEAGUE_LABEL && isActive && (
                           <>
                             <div className="sport-vleague-board-head">
                               <span className="sport-vleague-board-head-title">
@@ -2373,9 +2429,7 @@ function App() {
                                   {!vLeagueTodayMatches.malgeun &&
                                   !vLeagueTodayMatches.goun
                                     ? "오늘은 경기가 없습니다."
-                                    : currentUser?.role === "student"
-                                      ? "아직 응원이 없어요 · 아래에서 첫 응원 남기기"
-                                      : "아직 응원이 없어요"}
+                                    : "아직 응원이 없어요 · 아래에서 첫 응원 남기기"}
                                 </span>
                               ) : (
                                 <div
@@ -2446,43 +2500,31 @@ function App() {
                         {currentUser.role === "student" && (
                           <>
                             {isVLeagueClub(name) ? (
-                              <div
-                                className={
-                                  isActive
-                                    ? "vleague-student-actions"
-                                    : "vleague-student-actions hidden"
-                                }
-                              >
-                                <button
-                                  type="button"
-                                  className="teacher-btn"
-                                  disabled={!isActive}
-                                  tabIndex={isActive ? 0 : -1}
-                                  aria-hidden={!isActive}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (!isActive) return;
-                                    handleEnterClub(name);
-                                  }}
-                                >
-                                  종목 페이지 입장하기
-                                </button>
-                                <button
-                                  type="button"
-                                  className="teacher-btn"
-                                  disabled={!isActive}
-                                  tabIndex={isActive ? 0 : -1}
-                                  aria-hidden={!isActive}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (!isActive) return;
-                                    handleEnterClub(name);
-                                    setClubTab("vCheer");
-                                  }}
-                                >
-                                  응원 메시지 작성하기
-                                </button>
-                              </div>
+                              isActive ? (
+                                <div className="vleague-student-actions">
+                                  <button
+                                    type="button"
+                                    className="teacher-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleEnterClub(name);
+                                    }}
+                                  >
+                                    종목 페이지 입장하기
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="teacher-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleEnterClub(name);
+                                      setClubTab("vCheer");
+                                    }}
+                                  >
+                                    응원 메시지 작성하기
+                                  </button>
+                                </div>
+                              ) : null
                             ) : (
                               <>
                                 {myStatus === "pending" && (
@@ -2568,41 +2610,64 @@ function App() {
                         )}
 
                         {currentUser.role === "teacher" && isActive && (
-                          <div className="teacher-actions">
-                            <button
-                              type="button"
-                              className="teacher-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                goTeacherMain(name);
-                              }}
-                            >
-                              메인페이지
-                            </button>
-                            <button
-                              type="button"
-                              className="teacher-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                goTeacherManage(name);
-                              }}
-                            >
-                              관리페이지
-                            </button>
-                            {isVLeagueClub(name) && (
-                              <button
-                                type="button"
-                                className="teacher-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  goTeacherMain(name);
-                                  setClubTab("vCheer");
-                                }}
-                              >
-                                우리반 응원하기
-                              </button>
+                          <>
+                            {isVLeagueClub(name) ? (
+                              <div className="vleague-student-actions">
+                                <button
+                                  type="button"
+                                  className="teacher-btn"
+                                  disabled={!isActive}
+                                  tabIndex={isActive ? 0 : -1}
+                                  aria-hidden={!isActive}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isActive) return;
+                                    goTeacherMain(name);
+                                  }}
+                                >
+                                  종목 페이지 입장하기
+                                </button>
+                                <button
+                                  type="button"
+                                  className="teacher-btn"
+                                  disabled={!isActive}
+                                  tabIndex={isActive ? 0 : -1}
+                                  aria-hidden={!isActive}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isActive) return;
+                                    goTeacherMain(name);
+                                    setClubTab("vCheer");
+                                  }}
+                                >
+                                  응원 메시지 작성하기
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="teacher-actions">
+                                <button
+                                  type="button"
+                                  className="teacher-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    goTeacherMain(name);
+                                  }}
+                                >
+                                  메인페이지
+                                </button>
+                                <button
+                                  type="button"
+                                  className="teacher-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    goTeacherManage(name);
+                                  }}
+                                >
+                                  관리페이지
+                                </button>
+                              </div>
                             )}
-                          </div>
+                          </>
                         )}
                       </div>
                     </div>
@@ -3734,11 +3799,13 @@ function App() {
                     <div className="vleague-section-title">우리반 응원하기</div>
                   </div>
                   <div className="vleague-cheer-wrap">
-                    {currentUser.role === "student" ? (
-                      myVLeagueClassRow && canWriteVLeagueCheerNow ? (
+                    {currentUser.role === "student" ||
+                    currentUser.role === "teacher" ? (
+                      vLeagueCheerWriterClassRow && canWriteVLeagueCheerNow ? (
                         <>
                           <div className="vleague-cheer-head">
-                            {myVLeagueClassRow.class_name} 응원 메시지 작성
+                            {vLeagueCheerWriterClassRow.class_name} 응원 메시지 작성
+                            {currentUser.role === "teacher" ? " (담임)" : ""}
                           </div>
                           <div className="vleague-cheer-form">
                             <input
@@ -3760,14 +3827,16 @@ function App() {
                         </>
                       ) : (
                         <div className="vleague-cheer-head">
-                          {myVLeagueClassRow
+                          {vLeagueCheerWriterClassRow
                             ? "응원 글은 우리 반 경기가 있는 날 기준, 전날 오후 2시부터 당일 오후 1시 전까지만 작성할 수 있습니다."
-                            : "응원 글은 볼 수 있습니다. 작성은 학번으로 확인된 소속 학급이 V리그 참가 학급으로 등록된 학생만 가능합니다."}
+                            : currentUser.role === "teacher"
+                              ? "응원 글은 볼 수 있습니다. 작성은 참가 학급에 담임으로 등록되고, 담임 이름이 로그인 이름과 일치할 때만 가능합니다."
+                              : "응원 글은 볼 수 있습니다. 작성은 학번으로 확인된 소속 학급이 V리그 참가 학급으로 등록된 학생만 가능합니다."}
                         </div>
                       )
                     ) : (
                       <div className="vleague-cheer-head">
-                        교사는 응원 글 조회만 가능합니다.
+                        응원 글을 볼 수 없는 계정입니다.
                       </div>
                     )}
                     {vLeagueCheerLoading ? (
