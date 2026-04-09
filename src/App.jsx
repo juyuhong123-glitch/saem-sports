@@ -76,7 +76,7 @@ function getVLeagueCheerWindowForMatchDate(matchDateYmd) {
   return { start, end };
 }
 
-/** 경기일 당일 13:00부터는 응원 글을 화면에서 숨긴다. */
+/** 경기일 당일 14:00부터는 응원 글을 화면에서 숨긴다. */
 function getVLeagueCheerHideAtForMatchDate(matchDateYmd) {
   const ymd = String(matchDateYmd || "").slice(0, 10);
   const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
@@ -84,7 +84,7 @@ function getVLeagueCheerHideAtForMatchDate(matchDateYmd) {
   const y = Number(parts[1]);
   const mo = Number(parts[2]);
   const d = Number(parts[3]);
-  return new Date(y, mo - 1, d, 13, 0, 0, 0);
+  return new Date(y, mo - 1, d, 14, 0, 0, 0);
 }
 
 /** 경기일 당일 13:01 ~ 14:00 사이에 응원 이벤트 추첨 가능 */
@@ -123,7 +123,7 @@ function isNowInVLeagueCheerWindow(matchDateYmd) {
 /**
  * 응원 글 표시:
  * - 작성 시각은 응원 작성 창(전날 14:00 ~ 당일 13:00 직전) 안이어야 하고,
- * - 현재 시각은 당일 13:00 이전이어야 한다. (13:00부터 자동 숨김)
+ * - 현재 시각은 당일 14:00 이전이어야 한다. (14:00부터 자동 숨김)
  */
 function isVLeagueCheerVisibleNow(cheer, matches, now = new Date()) {
   const classId = cheer.class_id;
@@ -1441,6 +1441,105 @@ function App() {
     setVLeagueCheerEventWinners(data || []);
   }, [clubs]);
 
+  const runAutoVLeagueCheerEventDraw = useCallback(async () => {
+    const vLeagueClubRows = getClubsByName(V_LEAGUE_LABEL);
+    const clubIds = Array.from(
+      new Set((vLeagueClubRows || []).map((c) => c?.id).filter(Boolean))
+    );
+    if (clubIds.length === 0) return;
+
+    const now = new Date();
+    const today = toYmd(now);
+    const cheerWriteWindow = getVLeagueCheerWindowForMatchDate(today);
+    const drawWindow = getVLeagueCheerDrawWindowForMatchDate(today);
+    if (
+      !cheerWriteWindow ||
+      !drawWindow ||
+      !(now >= drawWindow.start && now < drawWindow.end)
+    ) {
+      return;
+    }
+
+    const { data: todaysMatches, error: matchErr } = await supabase
+      .from("vleague_matches")
+      .select("club_id, match_date, home_class_id, away_class_id")
+      .in("club_id", clubIds)
+      .eq("match_date", today)
+      .limit(300);
+    if (matchErr || !todaysMatches?.length) return;
+
+    const classToClubId = new Map();
+    for (const m of todaysMatches) {
+      if (m?.home_class_id && !classToClubId.has(m.home_class_id)) {
+        classToClubId.set(m.home_class_id, m.club_id);
+      }
+      if (m?.away_class_id && !classToClubId.has(m.away_class_id)) {
+        classToClubId.set(m.away_class_id, m.club_id);
+      }
+    }
+    const classIds = Array.from(classToClubId.keys()).filter(Boolean);
+    if (classIds.length === 0) return;
+
+    const { data: existingWinners } = await supabase
+      .from("vleague_cheer_event_winners")
+      .select("club_id, class_id, match_date")
+      .in("club_id", clubIds)
+      .eq("match_date", today)
+      .in("class_id", classIds)
+      .limit(300);
+
+    const existingKey = new Set(
+      (existingWinners || []).map(
+        (r) =>
+          `${String(r.club_id || "")}__${String(r.class_id || "")}__${String(r.match_date || "")}`
+      )
+    );
+
+    for (const classId of classIds) {
+      const clubId = classToClubId.get(classId);
+      if (!clubId) continue;
+      const key = `${clubId}__${classId}__${today}`;
+      if (existingKey.has(key)) continue;
+
+      const { data: cheers } = await supabase
+        .from("vleague_cheers")
+        .select("student_id, student_name")
+        .eq("club_id", clubId)
+        .eq("class_id", classId)
+        .gte("created_at", cheerWriteWindow.start.toISOString())
+        .lt("created_at", drawWindow.start.toISOString())
+        .not("student_id", "is", null)
+        .limit(300);
+
+      const uniqueStudents = [];
+      const seen = new Set();
+      for (const c of cheers || []) {
+        const sid = String(c.student_id || "").trim();
+        const sname = String(c.student_name || "").trim();
+        if (!sid || !sname) continue;
+        if (seen.has(sid)) continue;
+        seen.add(sid);
+        uniqueStudents.push({ sid, sname });
+      }
+      if (uniqueStudents.length === 0) continue;
+
+      const picked = uniqueStudents[Math.floor(Math.random() * uniqueStudents.length)];
+      const { error: insErr } = await supabase.from("vleague_cheer_event_winners").insert([
+        {
+          club_id: clubId,
+          class_id: classId,
+          match_date: today,
+          winner_student_id: picked.sid,
+          winner_student_name: picked.sname,
+          picked_at: now.toISOString(),
+        },
+      ]);
+      if (!insErr) {
+        existingKey.add(key);
+      }
+    }
+  }, [clubs]);
+
   const loadVLeagueTodayMatchText = useCallback(async () => {
     const vLeagueClubRows = getClubsByName(V_LEAGUE_LABEL);
     const clubIds = Array.from(
@@ -1628,6 +1727,16 @@ function App() {
   useEffect(() => {
     loadVLeagueCheerEventWinners();
   }, [loadVLeagueCheerEventWinners]);
+
+  useEffect(() => {
+    const run = async () => {
+      await runAutoVLeagueCheerEventDraw();
+      await loadVLeagueCheerEventWinners();
+    };
+    run();
+    const id = window.setInterval(run, 30000);
+    return () => window.clearInterval(id);
+  }, [runAutoVLeagueCheerEventDraw, loadVLeagueCheerEventWinners]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
