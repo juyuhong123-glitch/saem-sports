@@ -52,7 +52,7 @@ function shortClassLabel(className) {
   return `${Number(m[1])}-${Number(m[2])}`;
 }
 
-/** 경기일(YYYY-MM-DD) 기준 로컬 시간: 전날 14:00 ~ 당일 13:00 직전까지 응원 작성·화면 노출 가능 */
+/** 경기일(YYYY-MM-DD) 기준 로컬 시간: 전날 14:00 ~ 당일 13:00 직전까지 응원 작성 가능 */
 function getVLeagueCheerWindowForMatchDate(matchDateYmd) {
   const ymd = String(matchDateYmd || "").slice(0, 10);
   const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
@@ -76,6 +76,43 @@ function getVLeagueCheerWindowForMatchDate(matchDateYmd) {
   return { start, end };
 }
 
+/** 경기일 당일 13:00부터는 응원 글을 화면에서 숨긴다. */
+function getVLeagueCheerHideAtForMatchDate(matchDateYmd) {
+  const ymd = String(matchDateYmd || "").slice(0, 10);
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!parts) return null;
+  const y = Number(parts[1]);
+  const mo = Number(parts[2]);
+  const d = Number(parts[3]);
+  return new Date(y, mo - 1, d, 13, 0, 0, 0);
+}
+
+/** 경기일 당일 13:01 ~ 14:00 사이에 응원 이벤트 추첨 가능 */
+function getVLeagueCheerDrawWindowForMatchDate(matchDateYmd) {
+  const ymd = String(matchDateYmd || "").slice(0, 10);
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!parts) return null;
+  const y = Number(parts[1]);
+  const mo = Number(parts[2]);
+  const d = Number(parts[3]);
+  const start = new Date(y, mo - 1, d, 13, 1, 0, 0);
+  const end = new Date(y, mo - 1, d, 14, 0, 0, 0);
+  return { start, end };
+}
+
+/** 이벤트 카드 노출 시간: 경기일 당일 13:00 ~ 14:00 */
+function isNowInVLeagueCheerEventDisplayWindow(matchDateYmd, now = new Date()) {
+  const ymd = String(matchDateYmd || "").slice(0, 10);
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!parts) return false;
+  const y = Number(parts[1]);
+  const mo = Number(parts[2]);
+  const d = Number(parts[3]);
+  const start = new Date(y, mo - 1, d, 13, 0, 0, 0);
+  const end = new Date(y, mo - 1, d, 14, 0, 0, 0);
+  return now >= start && now < end;
+}
+
 function isNowInVLeagueCheerWindow(matchDateYmd) {
   const w = getVLeagueCheerWindowForMatchDate(matchDateYmd);
   if (!w) return false;
@@ -84,8 +121,9 @@ function isNowInVLeagueCheerWindow(matchDateYmd) {
 }
 
 /**
- * 응원 글 표시: 해당 학급 경기의 응원 창(전날 14:00 ~ 당일 13:00 직전) 안에 작성되었고,
- * 지금 시각도 그 같은 창 안일 때만 노출한다. (예: 4/3 경기 응원은 4/3 13:00 이후 목록에서 제외)
+ * 응원 글 표시:
+ * - 작성 시각은 응원 작성 창(전날 14:00 ~ 당일 13:00 직전) 안이어야 하고,
+ * - 현재 시각은 당일 13:00 이전이어야 한다. (13:00부터 자동 숨김)
  */
 function isVLeagueCheerVisibleNow(cheer, matches, now = new Date()) {
   const classId = cheer.class_id;
@@ -97,13 +135,16 @@ function isVLeagueCheerVisibleNow(cheer, matches, now = new Date()) {
     if (m.home_class_id !== classId && m.away_class_id !== classId) continue;
     const ymd = String(m.match_date).slice(0, 10);
     const w = getVLeagueCheerWindowForMatchDate(ymd);
-    if (!w) continue;
-    if (created >= w.start && created < w.end && now >= w.start && now < w.end) {
+    const hideAt = getVLeagueCheerHideAtForMatchDate(ymd);
+    if (!w || !hideAt) continue;
+    if (created >= w.start && created < w.end && now < hideAt) {
       return true;
     }
   }
   return false;
 }
+
+const VLEAGUE_POSTPONE_UNDO_STORAGE_KEY = "vleague_postpone_undo_v1";
 
 function App() {
   const [currentUser, setCurrentUser] = useState(null); // {role, name, id?}
@@ -114,7 +155,7 @@ function App() {
   const [mainMsg, setMainMsg] = useState("");
   const [myAppByClubId, setMyAppByClubId] = useState({}); // 학생: { [clubId]: {status, id} }
   const [page, setPage] = useState({ type: "home", clubName: null }); // home | clubMain | clubManage
-  const [clubTab, setClubTab] = useState("schedule"); // schedule | members | attendance | records | vClasses | vStandings | vReferee
+  const [clubTab, setClubTab] = useState("schedule"); // schedule | members | attendance | records | vClasses | vStandings | vReferee | vRules
   const [membersLoading, setMembersLoading] = useState(false);
   const [vLeagueClasses, setVLeagueClasses] = useState([]);
   const [vLeagueClassesError, setVLeagueClassesError] = useState(null);
@@ -151,16 +192,28 @@ function App() {
   const [vLeaguePushingToCalendar, setVLeaguePushingToCalendar] = useState(false);
   const [vLeagueSyncingCalendar, setVLeagueSyncingCalendar] = useState(false);
   const [vLeagueDeletingMatchesAll, setVLeagueDeletingMatchesAll] = useState(false);
-  const [vLeagueBulkPostponeDate, setVLeagueBulkPostponeDate] = useState("");
-  const [vLeagueBulkPostponing, setVLeagueBulkPostponing] = useState(false);
   const [vLeagueValidating, setVLeagueValidating] = useState(false);
   const [vLeagueResultDrafts, setVLeagueResultDrafts] = useState({});
   const [vLeagueResultSavingId, setVLeagueResultSavingId] = useState(null);
+  const [vLeagueMatchPostponingId, setVLeagueMatchPostponingId] = useState(null);
+  const [vLeagueUndoingMatchId, setVLeagueUndoingMatchId] = useState(null);
+  const [vLeaguePostponeUndoByMatchId, setVLeaguePostponeUndoByMatchId] = useState(() => {
+    try {
+      const raw = localStorage.getItem(VLEAGUE_POSTPONE_UNDO_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
   const [vLeagueCheerDraft, setVLeagueCheerDraft] = useState("");
   const [vLeagueCheers, setVLeagueCheers] = useState([]);
   const [vLeagueCheerLoading, setVLeagueCheerLoading] = useState(false);
   const [vLeagueCheerBoard, setVLeagueCheerBoard] = useState([]);
+  const [vLeagueCheerBoardMatches, setVLeagueCheerBoardMatches] = useState([]);
   const [vLeagueCheerBoardIndex, setVLeagueCheerBoardIndex] = useState(0);
+  const [vLeagueCheerEventWinners, setVLeagueCheerEventWinners] = useState([]);
   const [cheerStripNoTransition, setCheerStripNoTransition] = useState(false);
   /** 전광판 슬라이드 높이(px) — 첫 슬롯 DOM 측정으로 rotator/transform과 일치 */
   const [cheerSlidePx, setCheerSlidePx] = useState(64);
@@ -178,11 +231,13 @@ function App() {
   const [vLeagueReferees, setVLeagueReferees] = useState([]);
   const [vLeagueRefereeAssignments, setVLeagueRefereeAssignments] = useState([]);
   const [vLeagueRefereeLoading, setVLeagueRefereeLoading] = useState(false);
-  const [vLeagueRefereeNameDraft, setVLeagueRefereeNameDraft] = useState("");
-  const [vLeagueAssignStudentIdDraft, setVLeagueAssignStudentIdDraft] = useState("");
-  const [vLeagueAssignMatchIdDraft, setVLeagueAssignMatchIdDraft] = useState("");
-  const [vLeagueAssignRoleDraft, setVLeagueAssignRoleDraft] = useState("chief");
+  const [vLeagueRefereeStudentIdDraft, setVLeagueRefereeStudentIdDraft] = useState("");
   const [vLeagueRefereeSaving, setVLeagueRefereeSaving] = useState(false);
+  const [vLeagueRuleText, setVLeagueRuleText] = useState("");
+  const [vLeagueRuleDraft, setVLeagueRuleDraft] = useState("");
+  const [vLeagueRuleLoading, setVLeagueRuleLoading] = useState(false);
+  const [vLeagueRuleSaving, setVLeagueRuleSaving] = useState(false);
+  const [showVLeagueRulePopup, setShowVLeagueRulePopup] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -226,6 +281,7 @@ function App() {
   const [studentSignupId, setStudentSignupId] = useState("");
   const [studentSignupName, setStudentSignupName] = useState("");
   const [studentSignupPw, setStudentSignupPw] = useState("");
+  const [studentNameDuplicateCountMap, setStudentNameDuplicateCountMap] = useState({});
 
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -266,6 +322,50 @@ function App() {
       // ignore
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        VLEAGUE_POSTPONE_UNDO_STORAGE_KEY,
+        JSON.stringify(vLeaguePostponeUndoByMatchId || {})
+      );
+    } catch {
+      // ignore
+    }
+  }, [vLeaguePostponeUndoByMatchId]);
+
+  useEffect(() => {
+    let alive = true;
+    const loadStudentNameCountMap = async () => {
+      const { data, error } = await supabase.from("students").select("student_id, name");
+      if (error || !alive) return;
+      const counts = {};
+      for (const row of data || []) {
+        const name = String(row?.name || "").trim();
+        if (!name) continue;
+        counts[name] = (counts[name] || 0) + 1;
+      }
+      setStudentNameDuplicateCountMap(counts);
+    };
+    loadStudentNameCountMap();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const formatStudentDisplayName = useCallback(
+    (name, studentId = null) => {
+      const n = String(name || "").trim();
+      if (!n) return "—";
+      const count = Number(studentNameDuplicateCountMap[n] || 0);
+      if (count <= 1) return n;
+      const className = formatClassNameFromStudentId(studentId);
+      const short = className ? shortClassLabel(className) : null;
+      if (!short) return n;
+      return `${n}(${short})`;
+    },
+    [studentNameDuplicateCountMap]
+  );
 
   const detectApplicationColumns = async () => {
     // 현재 프로젝트에서는 고정 컬럼명을 사용합니다.
@@ -515,6 +615,12 @@ function App() {
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(
       d.getHours()
     )}:${pad2(d.getMinutes())}`;
+  };
+
+  const formatYmdKorean = (ymd) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+    if (!m) return String(ymd || "");
+    return `${Number(m[2])}월 ${Number(m[3])}일`;
   };
 
   const loadApprovedStudents = async (clubId) => {
@@ -1175,12 +1281,70 @@ function App() {
     );
   }, [vLeagueCheers, vLeagueMatches, cheerEligibilityTick]);
 
+  const vLeagueCheerAutoDrawInfo = useMemo(() => {
+    if (!vLeagueCheerWriterClassRow?.id) {
+      return { enabled: false, reason: "내 학급 정보가 없어서 추첨 상태를 확인할 수 없습니다." };
+    }
+    const now = new Date();
+    const writerClassId = vLeagueCheerWriterClassRow.id;
+    const classMatchDates = Array.from(
+      new Set(
+        (vLeagueMatches || [])
+          .filter(
+            (m) =>
+              Boolean(m.match_date) &&
+              (m.home_class_id === writerClassId || m.away_class_id === writerClassId)
+          )
+          .map((m) => String(m.match_date).slice(0, 10))
+      )
+    );
+    const drawYmd = classMatchDates.find((ymd) => {
+      const w = getVLeagueCheerDrawWindowForMatchDate(ymd);
+      return w ? now >= w.start && now < w.end : false;
+    });
+    if (!drawYmd) {
+      return {
+        enabled: false,
+        reason: "자동 추첨은 경기 당일 13:01~14:00에 실행됩니다.",
+      };
+    }
+    return { enabled: true, reason: "", drawYmd };
+  }, [vLeagueCheerWriterClassRow, vLeagueMatches, cheerEligibilityTick]);
+
+  const showVLeagueCheerEventPanelNow = useMemo(() => {
+    if (!vLeagueCheerWriterClassRow?.id) return false;
+    const now = new Date();
+    return (vLeagueMatches || []).some(
+      (m) =>
+        Boolean(m.match_date) &&
+        (m.home_class_id === vLeagueCheerWriterClassRow.id ||
+          m.away_class_id === vLeagueCheerWriterClassRow.id) &&
+        isNowInVLeagueCheerEventDisplayWindow(String(m.match_date).slice(0, 10), now)
+    );
+  }, [vLeagueCheerWriterClassRow, vLeagueMatches, cheerEligibilityTick]);
+
   const visibleVLeagueCheerBoard = useMemo(() => {
     const now = new Date();
+    const sourceMatches =
+      vLeagueCheerBoardMatches && vLeagueCheerBoardMatches.length > 0
+        ? vLeagueCheerBoardMatches
+        : vLeagueMatches;
     return (vLeagueCheerBoard || []).filter((c) =>
-      isVLeagueCheerVisibleNow(c, vLeagueMatches, now)
+      isVLeagueCheerVisibleNow(c, sourceMatches, now)
     );
-  }, [vLeagueCheerBoard, vLeagueMatches, cheerEligibilityTick]);
+  }, [vLeagueCheerBoard, vLeagueCheerBoardMatches, vLeagueMatches, cheerEligibilityTick]);
+
+  const vLeagueTodayYmd = useMemo(() => toYmd(new Date()), [cheerEligibilityTick]);
+  const myClassEventWinnerToday = useMemo(() => {
+    if (!vLeagueCheerWriterClassRow?.id) return null;
+    return (
+      (vLeagueCheerEventWinners || []).find(
+        (row) =>
+          row.class_id === vLeagueCheerWriterClassRow.id &&
+          String(row.match_date || "").slice(0, 10) === vLeagueTodayYmd
+      ) || null
+    );
+  }, [vLeagueCheerEventWinners, vLeagueCheerWriterClassRow, vLeagueTodayYmd]);
 
   useEffect(() => {
     const id = window.setInterval(
@@ -1214,33 +1378,75 @@ function App() {
   }, []);
 
   const loadVLeagueCheerBoard = useCallback(async () => {
-    const vLeagueClub = getClubByName(V_LEAGUE_LABEL);
-    if (!vLeagueClub?.id) {
+    const vLeagueClubRows = getClubsByName(V_LEAGUE_LABEL);
+    const clubIds = Array.from(
+      new Set((vLeagueClubRows || []).map((c) => c?.id).filter(Boolean))
+    );
+    if (clubIds.length === 0) {
       setVLeagueCheerBoard([]);
+      setVLeagueCheerBoardMatches([]);
       setVLeagueCheerBoardIndex(0);
       return;
     }
-    await loadVLeagueMatches(vLeagueClub.id);
+    const { data: matchRows } = await supabase
+      .from("vleague_matches")
+      .select("id, home_class_id, away_class_id, match_date, league")
+      .in("club_id", clubIds)
+      .order("match_date", { ascending: true })
+      .limit(400);
+    setVLeagueCheerBoardMatches(matchRows || []);
     const { data, error } = await supabase
       .from("vleague_cheers")
       .select(
         "id, class_id, message, student_name, created_at, class:vleague_classes(class_name)"
       )
-      .eq("club_id", vLeagueClub.id)
+      .in("club_id", clubIds)
       .order("created_at", { ascending: false })
       .limit(30);
     if (error) {
       setVLeagueCheerBoard([]);
+      setVLeagueCheerBoardMatches([]);
       setVLeagueCheerBoardIndex(0);
       return;
     }
     setVLeagueCheerBoard(data || []);
     setVLeagueCheerBoardIndex(0);
-  }, [clubs, loadVLeagueMatches]);
+  }, [clubs]);
+
+  const loadVLeagueCheerEventWinners = useCallback(async () => {
+    const vLeagueClubRows = getClubsByName(V_LEAGUE_LABEL);
+    const clubIds = Array.from(
+      new Set((vLeagueClubRows || []).map((c) => c?.id).filter(Boolean))
+    );
+    if (clubIds.length === 0) {
+      setVLeagueCheerEventWinners([]);
+      return;
+    }
+    const ymdBase = toYmd(new Date());
+    const ymdFrom = addDaysYmd(ymdBase, -7) || ymdBase;
+    const { data, error } = await supabase
+      .from("vleague_cheer_event_winners")
+      .select(
+        "id, club_id, class_id, match_date, winner_student_id, winner_student_name, picked_at"
+      )
+      .in("club_id", clubIds)
+      .gte("match_date", ymdFrom)
+      .order("match_date", { ascending: false })
+      .order("picked_at", { ascending: false })
+      .limit(80);
+    if (error) {
+      setVLeagueCheerEventWinners([]);
+      return;
+    }
+    setVLeagueCheerEventWinners(data || []);
+  }, [clubs]);
 
   const loadVLeagueTodayMatchText = useCallback(async () => {
-    const vLeagueClub = getClubByName(V_LEAGUE_LABEL);
-    if (!vLeagueClub?.id) {
+    const vLeagueClubRows = getClubsByName(V_LEAGUE_LABEL);
+    const clubIds = Array.from(
+      new Set((vLeagueClubRows || []).map((c) => c?.id).filter(Boolean))
+    );
+    if (clubIds.length === 0) {
       setVLeagueTodayMatches({ malgeun: "", goun: "" });
       setVLeagueTodayMatchIds({ malgeun: null, goun: null });
       return;
@@ -1249,22 +1455,99 @@ function App() {
     const { data: classes } = await supabase
       .from("vleague_classes")
       .select("id, class_name")
-      .eq("club_id", vLeagueClub.id);
+      .in("club_id", clubIds);
     const classMap = new Map((classes || []).map((c) => [c.id, c.class_name]));
+    for (const c of vLeagueClasses || []) {
+      if (c?.id && c?.class_name && !classMap.has(c.id)) {
+        classMap.set(c.id, c.class_name);
+      }
+    }
+    const ymdYesterday = addDaysYmd(today, -1);
+    const ymdTomorrow = addDaysYmd(today, 1);
     const { data: matches, error } = await supabase
       .from("vleague_matches")
       .select("id, home_class_id, away_class_id, match_date, league")
-      .eq("club_id", vLeagueClub.id)
-      .eq("match_date", today)
+      .in("club_id", clubIds)
+      .gte("match_date", ymdYesterday)
+      .lte("match_date", ymdTomorrow)
+      .order("match_date", { ascending: true })
       .order("match_no", { ascending: true })
-      .limit(100);
-    if (error || !matches || matches.length === 0) {
+      .limit(300);
+    if (error) {
       setVLeagueTodayMatches({ malgeun: "", goun: "" });
       setVLeagueTodayMatchIds({ malgeun: null, goun: null });
       return;
     }
-    const firstMalgeun = matches.find((m) => m.league === "malgeun") || null;
-    const firstGoun = matches.find((m) => m.league === "goun") || null;
+    const fallbackMatches = (vLeagueMatches || []).filter((m) => {
+      const clubOk = !m?.club_id || clubIds.includes(m.club_id);
+      return (
+        clubOk &&
+        String(m?.match_date || "") >= ymdYesterday &&
+        String(m?.match_date || "") <= ymdTomorrow
+      );
+    });
+    const sourceMatches = (matches && matches.length > 0 ? matches : fallbackMatches) || [];
+    if (sourceMatches.length === 0) {
+      setVLeagueTodayMatches({ malgeun: "", goun: "" });
+      setVLeagueTodayMatchIds({ malgeun: null, goun: null });
+      return;
+    }
+    const inferGradeFromClassName = (className) => {
+      const s = String(className || "").trim();
+      if (!s) return null;
+      const n = s.match(/(\d{1,2})/);
+      if (!n) return null;
+      const grade = Number(n[1]);
+      if (grade === 5 || grade === 6) return grade;
+      return null;
+    };
+    const resolveLeagueKey = (m) => {
+      const raw = String(m?.league || "")
+        .toLowerCase()
+        .replace(/\s+/g, "");
+      if (raw.includes("malgeun") || raw.includes("맑은")) return "malgeun";
+      if (raw.includes("goun") || raw.includes("고운")) return "goun";
+      const homeClassName = String(classMap.get(m?.home_class_id) || "");
+      const awayClassName = String(classMap.get(m?.away_class_id) || "");
+      const homeGrade = inferGradeFromClassName(homeClassName);
+      const awayGrade = inferGradeFromClassName(awayClassName);
+      const grade = homeGrade || awayGrade;
+      if (grade === 5) return "malgeun";
+      if (grade === 6) return "goun";
+      return "";
+    };
+    const isNowInTodayMatchBannerWindow = (matchDateYmd) => {
+      const ymd = String(matchDateYmd || "").slice(0, 10);
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+      if (!m) return false;
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      const d = Number(m[3]);
+      const matchDay = new Date(y, mo - 1, d);
+      const prevDay = new Date(matchDay);
+      prevDay.setDate(prevDay.getDate() - 1);
+      const start = new Date(
+        prevDay.getFullYear(),
+        prevDay.getMonth(),
+        prevDay.getDate(),
+        14,
+        0,
+        0,
+        0
+      );
+      const end = new Date(y, mo - 1, d, 14, 0, 0, 0);
+      const now = new Date();
+      return now >= start && now < end;
+    };
+
+    const byLeague = { malgeun: [], goun: [] };
+    for (const m of sourceMatches) {
+      if (!isNowInTodayMatchBannerWindow(m.match_date)) continue;
+      const k = resolveLeagueKey(m);
+      if (k === "malgeun" || k === "goun") byLeague[k].push(m);
+    }
+    const firstMalgeun = byLeague.malgeun[0] || null;
+    const firstGoun = byLeague.goun[0] || null;
     const toMatchText = (m, leagueLabel) => {
       if (!m) return "";
       const home = shortClassLabel(classMap.get(m.home_class_id) || "학급");
@@ -1279,7 +1562,7 @@ function App() {
       malgeun: firstMalgeun?.id || null,
       goun: firstGoun?.id || null,
     });
-  }, [clubs]);
+  }, [clubs, vLeagueClasses, vLeagueMatches]);
 
   const loadVLeagueRefereeData = useCallback(async (clubId) => {
     if (!clubId) {
@@ -1292,7 +1575,7 @@ function App() {
       await Promise.all([
         supabase
           .from("vleague_referees")
-          .select("id, student_name, created_at")
+          .select("id, student_id, student_name, created_at")
           .eq("club_id", clubId)
           .order("created_at", { ascending: false }),
         supabase
@@ -1314,9 +1597,44 @@ function App() {
     setVLeagueRefereeAssignments(assigns || []);
   }, []);
 
+  const loadVLeagueRuleText = useCallback(async (clubId) => {
+    if (!clubId) {
+      setVLeagueRuleText("");
+      setVLeagueRuleDraft("");
+      return;
+    }
+    setVLeagueRuleLoading(true);
+    const { data, error } = await supabase
+      .from("vleague_rule_settings")
+      .select("rule_text")
+      .eq("club_id", clubId)
+      .maybeSingle();
+    setVLeagueRuleLoading(false);
+    if (error) {
+      setMainMsg(`V리그 규칙 로딩 실패: ${error.message}`);
+      setVLeagueRuleText("");
+      setVLeagueRuleDraft("");
+      return;
+    }
+    const txt = String(data?.rule_text || "").trim();
+    setVLeagueRuleText(txt);
+    setVLeagueRuleDraft(txt);
+  }, []);
+
   useEffect(() => {
     loadVLeagueCheerBoard();
   }, [loadVLeagueCheerBoard]);
+
+  useEffect(() => {
+    loadVLeagueCheerEventWinners();
+  }, [loadVLeagueCheerEventWinners]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      loadVLeagueCheerEventWinners();
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, [loadVLeagueCheerEventWinners]);
 
   useEffect(() => {
     loadVLeagueTodayMatchText();
@@ -1374,7 +1692,16 @@ function App() {
     if (!club?.id) return;
     loadVLeagueMatches(club.id);
     loadVLeagueCheers(club.id);
-  }, [page.type, clubTab, page.clubName, clubs, loadVLeagueCheers, loadVLeagueMatches]);
+    loadVLeagueCheerEventWinners();
+  }, [
+    page.type,
+    clubTab,
+    page.clubName,
+    clubs,
+    loadVLeagueCheers,
+    loadVLeagueMatches,
+    loadVLeagueCheerEventWinners,
+  ]);
 
   useEffect(() => {
     if (page.type !== "clubMain" || clubTab !== "vReferee") return;
@@ -1393,6 +1720,23 @@ function App() {
     loadVLeagueClasses,
     loadVLeagueRefereeData,
   ]);
+
+  useEffect(() => {
+    if (page.type !== "clubMain" || clubTab !== "vRules") return;
+    if (!isVLeagueClub(page.clubName)) return;
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
+    loadVLeagueRuleText(club.id);
+  }, [page.type, clubTab, page.clubName, clubs, loadVLeagueRuleText]);
+
+  useEffect(() => {
+    if (page.type !== "clubMain") return;
+    if (!isVLeagueClub(page.clubName)) return;
+    if (isVLeagueAdmin) return;
+    if (clubTab === "vReferee" || clubTab === "vRules") {
+      setClubTab("vMatches");
+    }
+  }, [page.type, page.clubName, clubTab, isVLeagueAdmin]);
 
   useEffect(() => {
     const vLeagueClub = getClubByName(V_LEAGUE_LABEL);
@@ -1430,6 +1774,52 @@ function App() {
     }
     const club = getClubByName(page.clubName);
     if (!club?.id) return;
+
+    // 학생은 "같은 경기일(=같은 응원 창)"에 1회만 응원 등록 가능
+    if (currentUser.role === "student" && currentUser.id) {
+      const now = new Date();
+      const activeMatchDates = Array.from(
+        new Set(
+          (vLeagueMatches || [])
+            .filter(
+              (m) =>
+                (m.home_class_id === vLeagueCheerWriterClassRow.id ||
+                  m.away_class_id === vLeagueCheerWriterClassRow.id) &&
+                Boolean(m.match_date)
+            )
+            .map((m) => String(m.match_date).slice(0, 10))
+            .filter((ymd) => isNowInVLeagueCheerWindow(ymd))
+        )
+      );
+      if (activeMatchDates.length > 0) {
+        const { data: myCheers, error: myCheerErr } = await supabase
+          .from("vleague_cheers")
+          .select("created_at")
+          .eq("club_id", club.id)
+          .eq("class_id", vLeagueCheerWriterClassRow.id)
+          .eq("student_id", currentUser.id)
+          .order("created_at", { ascending: false })
+          .limit(200);
+        if (myCheerErr) {
+          setMainMsg(`응원 글 확인 실패: ${myCheerErr.message}`);
+          return;
+        }
+        const alreadyCheeredTodayMatch = (myCheers || []).some((row) => {
+          const created = new Date(row.created_at);
+          if (Number.isNaN(created.getTime())) return false;
+          return activeMatchDates.some((ymd) => {
+            const w = getVLeagueCheerWindowForMatchDate(ymd);
+            if (!w) return false;
+            return now >= w.start && now < w.end && created >= w.start && created < w.end;
+          });
+        });
+        if (alreadyCheeredTodayMatch) {
+          setMainMsg("같은 경기일에는 학생 1명당 응원 메시지를 1회만 등록할 수 있습니다.");
+          return;
+        }
+      }
+    }
+
     const studentName =
       currentUser.role === "teacher"
         ? `${shortClassLabel(vLeagueCheerWriterClassRow.class_name)} 선생님`
@@ -1460,73 +1850,9 @@ function App() {
       setMainMsg("심판 등록은 관리자(홍준영)만 가능합니다.");
       return;
     }
-    const name = String(vLeagueRefereeNameDraft || "").trim();
-    if (!name) {
-      setMainMsg("심판 이름을 입력해 주세요.");
-      return;
-    }
-    if (name.length > 20) {
-      setMainMsg("심판 이름은 20자 이내로 입력해 주세요.");
-      return;
-    }
-    const club = getClubByName(page.clubName);
-    if (!club?.id) return;
-    setVLeagueRefereeSaving(true);
-    try {
-      const { error } = await supabase.from("vleague_referees").insert([
-        {
-          club_id: club.id,
-          student_name: name,
-        },
-      ]);
-      if (error) {
-        setMainMsg(`심판 등록 실패: ${error.message}`);
-        return;
-      }
-      setVLeagueRefereeNameDraft("");
-      await loadVLeagueRefereeData(club.id);
-      setMainMsg("심판이 등록되었습니다.");
-    } finally {
-      setVLeagueRefereeSaving(false);
-    }
-  };
-
-  const handleAssignVLeagueReferee = async () => {
-    setMainMsg("");
-    if (!isVLeagueAdmin) {
-      setMainMsg("경기 배정은 관리자(홍준영)만 가능합니다.");
-      return;
-    }
-    const club = getClubByName(page.clubName);
-    if (!club?.id) return;
-    const studentId = String(vLeagueAssignStudentIdDraft || "").replace(/\D/g, "");
+    const studentId = String(vLeagueRefereeStudentIdDraft || "").replace(/\D/g, "");
     if (!/^\d{6}$/.test(studentId)) {
       setMainMsg("심판 학번 6자리를 입력해 주세요.");
-      return;
-    }
-    const matchId = String(vLeagueAssignMatchIdDraft || "").trim();
-    if (!matchId) {
-      setMainMsg("배정할 경기를 선택해 주세요.");
-      return;
-    }
-    const match = (vLeagueMatches || []).find((m) => m.id === matchId);
-    if (!match) {
-      setMainMsg("선택한 경기를 찾을 수 없습니다.");
-      return;
-    }
-    const className = formatClassNameFromStudentId(studentId);
-    if (!className) {
-      setMainMsg("유효한 학번 형식이 아닙니다.");
-      return;
-    }
-    const homeClass = vleagueClassNameById[match.home_class_id] || "";
-    const awayClass = vleagueClassNameById[match.away_class_id] || "";
-    const classNorm = normalizeClubName(className);
-    if (
-      normalizeClubName(homeClass) === classNorm ||
-      normalizeClubName(awayClass) === classNorm
-    ) {
-      setMainMsg("본인 학급 경기는 심판으로 배정할 수 없습니다.");
       return;
     }
     const { data: stu, error: stuErr } = await supabase
@@ -1543,63 +1869,192 @@ function App() {
       setMainMsg("학생 이름을 찾을 수 없습니다.");
       return;
     }
-    const isRegistered = (vLeagueReferees || []).some(
-      (r) => normalizeTeacherName(r.student_name) === normalizeTeacherName(studentName)
-    );
-    if (!isRegistered) {
-      setMainMsg("먼저 심판 등록에서 학생 이름을 등록해 주세요.");
+    if (studentName.length > 20) {
+      setMainMsg("심판 이름은 20자 이내여야 합니다.");
       return;
     }
-    const role = String(vLeagueAssignRoleDraft || "");
-    if (!["chief", "assistant1", "assistant2"].includes(role)) {
-      setMainMsg("심판 역할을 선택해 주세요.");
-      return;
-    }
-    const sameMatchRows = (vLeagueRefereeAssignmentsByMatch.get(matchId) || []);
-    if (sameMatchRows.some((a) => a.assignment_role === role)) {
-      setMainMsg(`${getRefereeRoleLabel(role)}은(는) 이미 배정되어 있습니다.`);
-      return;
-    }
-    if (sameMatchRows.some((a) => a.student_id === studentId)) {
-      setMainMsg("같은 경기에서 한 학생을 중복 배정할 수 없습니다.");
-      return;
-    }
-    const targetDate = String(match.match_date || "");
-    if (targetDate) {
-      const sameDayAssigned = (vLeagueRefereeAssignments || []).some((a) => {
-        if (a.student_id !== studentId) return false;
-        const am = vLeagueMatchById.get(a.match_id);
-        return String(am?.match_date || "") === targetDate;
-      });
-      if (sameDayAssigned) {
-        setMainMsg("해당 학생은 같은 날짜에 이미 다른 경기 심판으로 배정되어 있습니다.");
-        return;
-      }
-    }
-    if (sameMatchRows.length >= 3) {
-      setMainMsg("해당 경기는 이미 심판 3명이 배정되어 있습니다.");
-      return;
-    }
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
     setVLeagueRefereeSaving(true);
     try {
-      const { error } = await supabase.from("vleague_referee_assignments").insert([
+      const exists = (vLeagueReferees || []).some(
+        (r) => String(r.student_id || "") === studentId
+      );
+      if (exists) {
+        setMainMsg("이미 등록된 심판입니다.");
+        return;
+      }
+      const { error } = await supabase.from("vleague_referees").insert([
         {
           club_id: club.id,
-          match_id: matchId,
           student_id: studentId,
           student_name: studentName,
-          assignment_role: role,
         },
       ]);
       if (error) {
-        setMainMsg(`심판 배정 실패: ${error.message}`);
+        setMainMsg(`심판 등록 실패: ${error.message}`);
         return;
       }
-      setVLeagueAssignStudentIdDraft("");
-      setVLeagueAssignMatchIdDraft("");
-      setVLeagueAssignRoleDraft("chief");
+      setVLeagueRefereeStudentIdDraft("");
       await loadVLeagueRefereeData(club.id);
-      setMainMsg("심판 배정을 저장했습니다.");
+      setMainMsg("심판이 등록되었습니다.");
+    } finally {
+      setVLeagueRefereeSaving(false);
+    }
+  };
+
+  const handleSaveVLeagueRuleText = async () => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("규칙 수정은 관리자(홍준영)만 가능합니다.");
+      return;
+    }
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
+    const text = String(vLeagueRuleDraft || "").trim();
+    if (!text) {
+      setMainMsg("규칙 내용을 입력해 주세요.");
+      return;
+    }
+    setVLeagueRuleSaving(true);
+    try {
+      const { error } = await supabase.from("vleague_rule_settings").upsert(
+        {
+          club_id: club.id,
+          rule_text: text,
+          updated_by: currentUser?.name || null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "club_id" }
+      );
+      if (error) {
+        setMainMsg(`규칙 저장 실패: ${error.message}`);
+        return;
+      }
+      setVLeagueRuleText(text);
+      setMainMsg("V리그 규칙을 저장했습니다.");
+    } finally {
+      setVLeagueRuleSaving(false);
+    }
+  };
+
+  const handleAssignVLeagueReferee = async () => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("경기 배정은 관리자(홍준영)만 가능합니다.");
+      return;
+    }
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
+    const targetMatches = (vLeagueCurrentLeagueMatches || []).filter((m) => Boolean(m.id));
+    if (targetMatches.length === 0) {
+      setMainMsg("배정할 저장된 경기가 없습니다.");
+      return;
+    }
+    const ok = window.confirm(
+      `${vLeagueGradeTab === "malgeun" ? "맑은샘" : "고운샘"} 리그 ${targetMatches.length}경기에 심판 3명(주심1/부심2)을 일괄 랜덤 배정할까요?\n\n- 기존 배정(해당 리그 경기에 걸린 배정)은 덮어씁니다.\n- 같은 날짜 중복 배정은 허용되지 않습니다.`
+    );
+    if (!ok) return;
+
+    setVLeagueRefereeSaving(true);
+    try {
+      const { data: students, error: stuErr } = await supabase
+        .from("students")
+        .select("student_id, name");
+      if (stuErr || !students) {
+        setMainMsg("학생 목록을 불러오지 못했습니다.");
+        return;
+      }
+      const registeredStudentIdSet = new Set(
+        (vLeagueReferees || []).map((r) => String(r.student_id || "")).filter(Boolean)
+      );
+      const targetMatchIds = new Set(targetMatches.map((m) => m.id));
+      const usedByDate = new Map(); // ymd -> Set(student_id)
+      for (const a of vLeagueRefereeAssignments || []) {
+        if (targetMatchIds.has(a.match_id)) continue;
+        const am = vLeagueMatchById.get(a.match_id);
+        const ymd = String(am?.match_date || "");
+        if (!ymd) continue;
+        if (!usedByDate.has(ymd)) usedByDate.set(ymd, new Set());
+        usedByDate.get(ymd).add(String(a.student_id || ""));
+      }
+
+      const shuffle = (arr) => {
+        const out = [...arr];
+        for (let i = out.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const tmp = out[i];
+          out[i] = out[j];
+          out[j] = tmp;
+        }
+        return out;
+      };
+
+      const roleOrder = ["chief", "assistant1", "assistant2"];
+      const payload = [];
+      const orderedMatches = [...targetMatches].sort((a, b) => {
+        const ad = String(a.match_date || "");
+        const bd = String(b.match_date || "");
+        if (ad !== bd) return ad.localeCompare(bd);
+        return (a.match_no || 0) - (b.match_no || 0);
+      });
+
+      for (const match of orderedMatches) {
+        const homeClass = normalizeClubName(vleagueClassNameById[match.home_class_id] || "");
+        const awayClass = normalizeClubName(vleagueClassNameById[match.away_class_id] || "");
+        const ymd = String(match.match_date || "");
+        const used = usedByDate.get(ymd) || new Set();
+        const eligible = (students || []).filter((s) => {
+          const sid = String(s.student_id || "");
+          const sname = String(s.name || "").trim();
+          if (!/^\d{6}$/.test(sid) || !sname) return false;
+          if (!registeredStudentIdSet.has(sid)) return false;
+          const className = formatClassNameFromStudentId(sid);
+          if (!className) return false;
+          const classNorm = normalizeClubName(className);
+          if (classNorm === homeClass || classNorm === awayClass) return false;
+          if (ymd && used.has(sid)) return false;
+          return true;
+        });
+        if (eligible.length < 3) {
+          setMainMsg(
+            `${ymd || "날짜미정"} 경기 배정 실패: 조건을 만족하는 심판 후보가 3명보다 적습니다.`
+          );
+          return;
+        }
+        const picked = shuffle(eligible).slice(0, 3);
+        picked.forEach((p, idx) => {
+          payload.push({
+            club_id: club.id,
+            match_id: match.id,
+            student_id: String(p.student_id),
+            student_name: String(p.name || "").trim(),
+            assignment_role: roleOrder[idx],
+          });
+          if (ymd) used.add(String(p.student_id));
+        });
+        if (ymd) usedByDate.set(ymd, used);
+      }
+
+      const { error: delErr } = await supabase
+        .from("vleague_referee_assignments")
+        .delete()
+        .eq("club_id", club.id)
+        .in("match_id", Array.from(targetMatchIds));
+      if (delErr) {
+        setMainMsg(`기존 배정 삭제 실패: ${delErr.message}`);
+        return;
+      }
+
+      const { error } = await supabase.from("vleague_referee_assignments").insert(payload);
+      if (error) {
+        setMainMsg(`심판 일괄 배정 실패: ${error.message}`);
+        return;
+      }
+      await loadVLeagueRefereeData(club.id);
+      setMainMsg(
+        `${vLeagueGradeTab === "malgeun" ? "맑은샘" : "고운샘"} 리그 ${targetMatches.length}경기에 심판을 일괄 랜덤 배정했습니다.`
+      );
     } finally {
       setVLeagueRefereeSaving(false);
     }
@@ -2089,51 +2544,64 @@ function App() {
     );
     if (!ok) return;
 
-    // 현재 리그의 마지막 경기 날짜 다음날부터 탐색
-    const sameLeague = vLeagueMatches.filter((m) => m.league === matchRow.league);
-    const maxDate = getMaxMatchDateYmd(sameLeague) || matchRow.match_date || toYmd(new Date());
-    const start = addDaysYmd(maxDate, 1);
-    const nextDate = await findNextAvailableDateAfter(club.id, start, matchRow.league);
-    if (!nextDate) {
-      setMainMsg("다음 가능한 날짜를 찾지 못했습니다.");
-      return;
-    }
+    setVLeagueMatchPostponingId(matchRow.id);
+    try {
+      // 현재 리그의 마지막 경기 날짜 다음날부터 탐색
+      const sameLeague = vLeagueMatches.filter((m) => m.league === matchRow.league);
+      const maxDate = getMaxMatchDateYmd(sameLeague) || matchRow.match_date || toYmd(new Date());
+      const start = addDaysYmd(maxDate, 1);
+      const nextDate = await findNextAvailableDateAfter(club.id, start, matchRow.league);
+      if (!nextDate) {
+        setMainMsg("다음 가능한 날짜를 찾지 못했습니다.");
+        return;
+      }
 
-    // 1) vleague_matches 날짜 업데이트
-    const { error: upErr } = await supabase
-      .from("vleague_matches")
-      .update({ match_date: nextDate })
-      .eq("id", matchRow.id)
-      .eq("club_id", club.id);
-    if (upErr) {
-      setMainMsg(`대진표 날짜 변경 실패: ${upErr.message}`);
-      return;
-    }
+      // 1) vleague_matches 날짜 업데이트
+      const { error: upErr } = await supabase
+        .from("vleague_matches")
+        .update({ match_date: nextDate })
+        .eq("id", matchRow.id)
+        .eq("club_id", club.id);
+      if (upErr) {
+        setMainMsg(`대진표 날짜 변경 실패: ${upErr.message}`);
+        return;
+      }
 
-    // 2) 기존 일정(있으면) 삭제 후 새 날짜로 등록
-    const token = formatVLeagueMatchToken(matchRow.id).trim();
-    if (token) {
-      await supabase
-        .from("club_events")
-        .delete()
-        .eq("club_id", club.id)
-        .ilike("content", `%${token}%`);
-      await supabase.from("club_events").insert([
-        {
-          club_id: club.id,
-          event_date: nextDate,
-          content: formatVLeagueEventContent({ ...matchRow, match_date: nextDate }),
-          created_by: currentUser?.name || null,
+      // 2) 기존 일정(있으면) 삭제 후 새 날짜로 등록
+      const token = formatVLeagueMatchToken(matchRow.id).trim();
+      if (token) {
+        await supabase
+          .from("club_events")
+          .delete()
+          .eq("club_id", club.id)
+          .ilike("content", `%${token}%`);
+        await supabase.from("club_events").insert([
+          {
+            club_id: club.id,
+            event_date: nextDate,
+            content: formatVLeagueEventContent({ ...matchRow, match_date: nextDate }),
+            created_by: currentUser?.name || null,
+          },
+        ]);
+      }
+
+      setVLeaguePostponeUndoByMatchId((prev) => ({
+        ...prev,
+        [matchRow.id]: {
+          matchId: matchRow.id,
+          fromDate: matchRow.match_date || "",
+          toDate: nextDate,
         },
-      ]);
+      }));
+      setMainMsg(`해당 경기를 ${nextDate}로 연기해 맨 뒤로 보냈습니다.`);
+      await loadVLeagueMatches(club.id);
+      await loadEventsForMonth(club.id, calendarMonth);
+    } finally {
+      setVLeagueMatchPostponingId(null);
     }
-
-    setMainMsg(`해당 경기를 ${nextDate}로 연기해 맨 뒤로 보냈습니다.`);
-    await loadVLeagueMatches(club.id);
-    await loadEventsForMonth(club.id, calendarMonth);
   };
 
-  const handlePostponeDateMatchesToEnd = async () => {
+  const handleUndoPostponedMatch = async (matchRow) => {
     setMainMsg("");
     if (!isVLeagueAdmin) {
       setMainMsg("대진표 생성/수정은 관리자만 가능합니다.");
@@ -2141,95 +2609,59 @@ function App() {
     }
     if (!page.clubName) return;
     const club = getClubByName(page.clubName);
-    if (!club) return;
-    const targetYmd = String(vLeagueBulkPostponeDate || "").trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetYmd)) {
-      setMainMsg("연기할 날짜를 선택해 주세요.");
+    if (!club || !matchRow?.id) return;
+    const undo = vLeaguePostponeUndoByMatchId[matchRow.id];
+    if (!undo?.fromDate) {
+      setMainMsg("되돌릴 연기 이력이 없습니다.");
       return;
     }
-    const targets = (vLeagueMatches || [])
-      .filter(
-        (m) =>
-          m.league === vLeagueGradeTab &&
-          String(m.match_date || "") === targetYmd &&
-          Boolean(m.id)
-      )
-      .sort((a, b) => {
-        if ((a.round_no || 0) !== (b.round_no || 0)) {
-          return (a.round_no || 0) - (b.round_no || 0);
-        }
-        return (a.match_no || 0) - (b.match_no || 0);
-      });
-
-    if (targets.length === 0) {
-      setMainMsg("선택한 날짜에 연기할 저장된 경기가 없습니다.");
+    if (String(matchRow.match_date || "") !== String(undo.toDate || "")) {
+      setMainMsg("현재 경기 날짜가 변경되어 되돌릴 수 없습니다.");
       return;
     }
 
-    const ok = window.confirm(
-      `${targetYmd} 경기 ${targets.length}건을 일정의 맨 뒤로 보낼까요?\n\n- 토/일, 제외 날짜, 기존 일정이 있는 날짜는 피해서 배정됩니다.\n- 해당 경기 일정(club_events)도 함께 이동됩니다.`
-    );
+    const ok = window.confirm(`이 경기를 ${undo.fromDate} 날짜로 되돌릴까요?`);
     if (!ok) return;
 
-    const sameLeague = (vLeagueMatches || []).filter((m) => m.league === vLeagueGradeTab);
-    const maxDate = getMaxMatchDateYmd(sameLeague) || targetYmd;
-    let cursor = addDaysYmd(maxDate, 1);
-
-    setVLeagueBulkPostponing(true);
+    setVLeagueUndoingMatchId(matchRow.id);
     try {
-      const moved = [];
-      for (const row of targets) {
-        const nextDate = await findNextAvailableDateAfter(club.id, cursor, row.league);
-        if (!nextDate) {
-          setMainMsg("다음 가능한 날짜를 찾지 못했습니다.");
-          return;
-        }
-        const { error: upErr } = await supabase
-          .from("vleague_matches")
-          .update({ match_date: nextDate })
-          .eq("id", row.id)
-          .eq("club_id", club.id);
-        if (upErr) {
-          setMainMsg(`대진표 날짜 변경 실패: ${upErr.message}`);
-          return;
-        }
-        moved.push({ ...row, match_date: nextDate });
-        cursor = addDaysYmd(nextDate, 1);
+      const { error: upErr } = await supabase
+        .from("vleague_matches")
+        .update({ match_date: undo.fromDate })
+        .eq("id", matchRow.id)
+        .eq("club_id", club.id);
+      if (upErr) {
+        setMainMsg(`경기 되돌리기 실패: ${upErr.message}`);
+        return;
       }
 
-      const tokens = moved
-        .map((m) => formatVLeagueMatchToken(m.id).trim())
-        .filter(Boolean);
-      for (const token of tokens) {
+      const token = formatVLeagueMatchToken(matchRow.id).trim();
+      if (token) {
         await supabase
           .from("club_events")
           .delete()
           .eq("club_id", club.id)
           .ilike("content", `%${token}%`);
-      }
-      const payload = moved
-        .filter((m) => Boolean(m.match_date))
-        .map((m) => ({
-          club_id: club.id,
-          event_date: m.match_date,
-          content: formatVLeagueEventContent(m),
-          created_by: currentUser?.name || null,
-        }));
-      if (payload.length > 0) {
-        const { error: insErr } = await supabase.from("club_events").insert(payload);
-        if (insErr) {
-          setMainMsg(`일정 이동 반영 실패: ${insErr.message}`);
-          return;
-        }
+        await supabase.from("club_events").insert([
+          {
+            club_id: club.id,
+            event_date: undo.fromDate,
+            content: formatVLeagueEventContent({ ...matchRow, match_date: undo.fromDate }),
+            created_by: currentUser?.name || null,
+          },
+        ]);
       }
 
+      setVLeaguePostponeUndoByMatchId((prev) => {
+        const next = { ...prev };
+        delete next[matchRow.id];
+        return next;
+      });
+      setMainMsg(`연기한 경기를 ${undo.fromDate}로 되돌렸습니다.`);
       await loadVLeagueMatches(club.id);
       await loadEventsForMonth(club.id, calendarMonth);
-      setMainMsg(
-        `${targetYmd} 경기 ${targets.length}건을 맨 뒤로 연기했습니다.`
-      );
     } finally {
-      setVLeagueBulkPostponing(false);
+      setVLeagueUndoingMatchId(null);
     }
   };
 
@@ -2491,6 +2923,10 @@ function App() {
     setEventEditorOpen(false);
     setEventEditorDate("");
     setNewEventContent("");
+    if (isVLeagueClub(clubName)) {
+      setShowVLeagueRulePopup(true);
+      loadVLeagueRuleText(club.id);
+    }
     await ensureClubEventsLoaded(clubName, monthStart(new Date()));
     await loadApprovedStudents(club.id);
     if (!isVLeagueClub(clubName)) {
@@ -2504,6 +2940,7 @@ function App() {
   const goTeacherMain = (clubName) => {
     setApplications([]);
     setMainMsg("");
+    const club = getClubByName(clubName);
     setPage({ type: "clubMain", clubName });
     setClubTab("schedule");
     setCalendarMonth(monthStart(new Date()));
@@ -2511,8 +2948,11 @@ function App() {
     setEventEditorOpen(false);
     setEventEditorDate("");
     setNewEventContent("");
+    if (isVLeagueClub(clubName)) {
+      setShowVLeagueRulePopup(true);
+      if (club) loadVLeagueRuleText(club.id);
+    }
     ensureClubEventsLoaded(clubName, monthStart(new Date()));
-    const club = getClubByName(clubName);
     if (club) {
       loadApprovedStudents(club.id);
       if (!isVLeagueClub(clubName)) {
@@ -2984,8 +3424,7 @@ function App() {
                                   </span>
                                   {vLeagueTodayMatchIds.malgeun ? (
                                     <span className="sport-vleague-board-head-item-ref">
-                                      {getRefereeSummaryByMatchId(vLeagueTodayMatchIds.malgeun) ||
-                                        "주심/부심 미배정"}
+                                      {getRefereeSummaryByMatchId(vLeagueTodayMatchIds.malgeun)}
                                     </span>
                                   ) : null}
                                 </span>
@@ -3010,8 +3449,7 @@ function App() {
                                   </span>
                                   {vLeagueTodayMatchIds.goun ? (
                                     <span className="sport-vleague-board-head-item-ref">
-                                      {getRefereeSummaryByMatchId(vLeagueTodayMatchIds.goun) ||
-                                        "주심/부심 미배정"}
+                                      {getRefereeSummaryByMatchId(vLeagueTodayMatchIds.goun)}
                                     </span>
                                   ) : null}
                                 </span>
@@ -3098,7 +3536,10 @@ function App() {
                                               className="sport-vleague-board-author"
                                               title={row.student_name || ""}
                                             >
-                                              {row.student_name || "—"}
+                                              {formatStudentDisplayName(
+                                                row.student_name,
+                                                row.student_id
+                                              )}
                                             </span>
                                           </div>
                                         </div>
@@ -3109,6 +3550,35 @@ function App() {
                               )}
                               </div>
                             </div>
+                            {showVLeagueCheerEventPanelNow && (
+                              <div className="sport-vleague-event-pill">
+                                <div className="sport-vleague-event-pill-title">이벤트 당첨</div>
+                                <div className="sport-vleague-event-pill-body">
+                                  {myClassEventWinnerToday ? (
+                                    <>
+                                      <span className="sport-vleague-event-pill-date">
+                                        {formatYmdKorean(myClassEventWinnerToday.match_date)} 이벤트 당첨
+                                      </span>
+                                      <span className="sport-vleague-event-pill-name">
+                                        {formatStudentDisplayName(
+                                          myClassEventWinnerToday.winner_student_name,
+                                          myClassEventWinnerToday.winner_student_id
+                                        )}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="sport-vleague-event-pill-date">
+                                        오늘 자동 추첨 대기 중
+                                      </span>
+                                      <span className="sport-vleague-event-pill-name">
+                                        13:01 이후 당첨자가 표시됩니다
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                           </>
                         )}
 
@@ -3338,16 +3808,30 @@ function App() {
                     >
                       순위표
                     </button>
-                    <button
-                      type="button"
-                      className={clubTab === "vReferee" ? "club-tab active" : "club-tab"}
-                      onClick={() => {
-                        setMainMsg("");
-                        setClubTab("vReferee");
-                      }}
-                    >
-                      심판 배정
-                    </button>
+                    {isVLeagueAdmin && (
+                      <>
+                        <button
+                          type="button"
+                          className={clubTab === "vReferee" ? "club-tab active" : "club-tab"}
+                          onClick={() => {
+                            setMainMsg("");
+                            setClubTab("vReferee");
+                          }}
+                        >
+                          심판 배정
+                        </button>
+                        <button
+                          type="button"
+                          className={clubTab === "vRules" ? "club-tab active" : "club-tab"}
+                          onClick={() => {
+                            setMainMsg("");
+                            setClubTab("vRules");
+                          }}
+                        >
+                          규칙 관리
+                        </button>
+                      </>
+                    )}
                   </>
                 ) : (
                   <>
@@ -3509,7 +3993,8 @@ function App() {
                         </>
                       )}
 
-                      {canCurrentTeacherEditSchedule(page.clubName) && (
+                      {canCurrentTeacherEditSchedule(page.clubName) &&
+                        !isVLeagueClub(page.clubName) && (
                         <div className="event-add">
                           <div className="event-add-title">
                             교사: 일정 추가 (달력 날짜를 클릭하세요)
@@ -3636,7 +4121,9 @@ function App() {
                             <div className="members-homeroom">
                               {formatHomeroom(s.student_id)}
                             </div>
-                            <div className="members-name">{s.student_name}</div>
+                            <div className="members-name">
+                              {formatStudentDisplayName(s.student_name, s.student_id)}
+                            </div>
                           </div>
                         ))
                       )}
@@ -3831,27 +4318,6 @@ function App() {
                             </div>
                           )}
                         </div>
-                      </div>
-
-                      <div className="vleague-matches-control-row">
-                        <label className="vleague-field vleague-field--wide">
-                          <span>특정 날짜 경기 맨 뒤로 연기</span>
-                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <input
-                              type="date"
-                              value={vLeagueBulkPostponeDate}
-                              onChange={(e) => setVLeagueBulkPostponeDate(e.target.value)}
-                            />
-                            <button
-                              type="button"
-                              className="vleague-ghost"
-                              disabled={vLeagueBulkPostponing}
-                              onClick={handlePostponeDateMatchesToEnd}
-                            >
-                              {vLeagueBulkPostponing ? "연기 중..." : "해당 날짜 전체 맨 뒤로"}
-                            </button>
-                          </div>
-                        </label>
                       </div>
 
                       <div className="vleague-matches-control-row">
@@ -4147,10 +4613,31 @@ function App() {
                                 <button
                                   type="button"
                                   className="vleague-match-postpone"
+                                  disabled={
+                                    vLeagueMatchPostponingId === m.id ||
+                                    vLeagueUndoingMatchId === m.id
+                                  }
                                   onClick={() => handlePostponeMatchToEnd(m)}
                                 >
-                                  맨 뒤로
+                                  {vLeagueMatchPostponingId === m.id ? "연기 중..." : "맨 뒤로"}
                                 </button>
+                                {vLeaguePostponeUndoByMatchId[m.id]?.fromDate &&
+                                  String(vLeaguePostponeUndoByMatchId[m.id]?.toDate || "") ===
+                                    String(m.match_date || "") && (
+                                    <button
+                                      type="button"
+                                      className="vleague-postpone-undo-btn"
+                                      disabled={
+                                        vLeagueMatchPostponingId === m.id ||
+                                        vLeagueUndoingMatchId === m.id
+                                      }
+                                      onClick={() => handleUndoPostponedMatch(m)}
+                                      title="연기 취소"
+                                      aria-label="연기 취소"
+                                    >
+                                      ↶
+                                    </button>
+                                  )}
                               </div>
                             )}
                             <div
@@ -4202,8 +4689,8 @@ function App() {
               )}
 
               {clubTab === "vClasses" && isVLeagueClub(page.clubName) && (
-                <div className="club-page-body">
-                    <div className="vleague-section-head">
+                <div className="club-page-body vleague-classes-body">
+                  <div className="vleague-section-head vleague-section-head--center">
                     <div className="vleague-section-title">참가 학급</div>
                   </div>
                   {vLeagueLoading && (
@@ -4472,64 +4959,105 @@ function App() {
                   <div className="vleague-section-head">
                     <div className="vleague-section-title">우리반 응원하기</div>
                   </div>
-                  <div className="vleague-cheer-wrap">
-                    {currentUser.role === "student" ||
-                    currentUser.role === "teacher" ? (
-                      vLeagueCheerWriterClassRow && canWriteVLeagueCheerNow ? (
-                        <>
+                  <div className="vleague-cheer-layout">
+                    <div className="vleague-cheer-wrap">
+                      {currentUser.role === "student" ||
+                      currentUser.role === "teacher" ? (
+                        vLeagueCheerWriterClassRow && canWriteVLeagueCheerNow ? (
+                          <>
+                            <div className="vleague-cheer-head">
+                              {vLeagueCheerWriterClassRow.class_name} 응원 메시지 작성
+                              {currentUser.role === "teacher" ? " (담임)" : ""}
+                            </div>
+                            <div className="vleague-cheer-form">
+                              <input
+                                type="text"
+                                className="vleague-cheer-input"
+                                maxLength={25}
+                                placeholder="응원 메시지 입력 (25자 이내)"
+                                value={vLeagueCheerDraft}
+                                onChange={(e) => setVLeagueCheerDraft(e.target.value)}
+                              />
+                              <button
+                                type="button"
+                                className="vleague-cheer-save"
+                                onClick={handleCreateVLeagueCheer}
+                              >
+                                등록
+                              </button>
+                            </div>
+                          </>
+                        ) : (
                           <div className="vleague-cheer-head">
-                            {vLeagueCheerWriterClassRow.class_name} 응원 메시지 작성
-                            {currentUser.role === "teacher" ? " (담임)" : ""}
+                            {vLeagueCheerWriterClassRow
+                              ? "응원 글은 우리 반 경기가 있는 날 기준, 전날 오후 2시부터 당일 오후 1시 전까지만 작성할 수 있습니다."
+                              : currentUser.role === "teacher"
+                                ? "응원 글은 볼 수 있습니다. 작성은 참가 학급에 담임으로 등록되고, 담임 이름이 로그인 이름과 일치할 때만 가능합니다."
+                                : "응원 글은 볼 수 있습니다. 작성은 학번으로 확인된 소속 학급이 V리그 참가 학급으로 등록된 학생만 가능합니다."}
                           </div>
-                          <div className="vleague-cheer-form">
-                            <input
-                              type="text"
-                              className="vleague-cheer-input"
-                              maxLength={25}
-                              placeholder="응원 메시지 입력 (25자 이내)"
-                              value={vLeagueCheerDraft}
-                              onChange={(e) => setVLeagueCheerDraft(e.target.value)}
-                            />
-                            <button
-                              type="button"
-                              className="vleague-cheer-save"
-                              onClick={handleCreateVLeagueCheer}
-                            >
-                              등록
-                            </button>
-                          </div>
-                        </>
+                        )
                       ) : (
                         <div className="vleague-cheer-head">
-                          {vLeagueCheerWriterClassRow
-                            ? "응원 글은 우리 반 경기가 있는 날 기준, 전날 오후 2시부터 당일 오후 1시 전까지만 작성할 수 있습니다."
-                            : currentUser.role === "teacher"
-                              ? "응원 글은 볼 수 있습니다. 작성은 참가 학급에 담임으로 등록되고, 담임 이름이 로그인 이름과 일치할 때만 가능합니다."
-                              : "응원 글은 볼 수 있습니다. 작성은 학번으로 확인된 소속 학급이 V리그 참가 학급으로 등록된 학생만 가능합니다."}
+                          응원 글을 볼 수 없는 계정입니다.
                         </div>
-                      )
-                    ) : (
-                      <div className="vleague-cheer-head">
-                        응원 글을 볼 수 없는 계정입니다.
-                      </div>
-                    )}
-                    {vLeagueCheerLoading ? (
-                      <div className="cal-loading">응원 글 불러오는 중...</div>
-                    ) : visibleVLeagueCheers.length === 0 ? (
-                      <div className="activity-empty">등록된 응원 메시지가 없습니다.</div>
-                    ) : (
-                      <div className="vleague-cheer-list">
-                        {visibleVLeagueCheers.map((row) => (
-                          <div key={row.id} className="vleague-cheer-item">
-                            <div className="vleague-cheer-msg">{row.message}</div>
-                            <div className="vleague-cheer-meta">
-                              {(vLeagueClasses.find((c) => c.id === row.class_id)?.class_name ||
-                                "학급")}{" "}
-                              · {row.student_name} · {formatDateTimeCompact(row.created_at)}
+                      )}
+                      {vLeagueCheerLoading ? (
+                        <div className="cal-loading">응원 글 불러오는 중...</div>
+                      ) : visibleVLeagueCheers.length === 0 ? (
+                        <div className="activity-empty">등록된 응원 메시지가 없습니다.</div>
+                      ) : (
+                        <div className="vleague-cheer-list">
+                          {visibleVLeagueCheers.map((row) => (
+                            <div key={row.id} className="vleague-cheer-item">
+                              <div className="vleague-cheer-msg">{row.message}</div>
+                              <div className="vleague-cheer-meta">
+                                {(vLeagueClasses.find((c) => c.id === row.class_id)?.class_name ||
+                                  "학급")}{" "}
+                                ·{" "}
+                                {formatStudentDisplayName(row.student_name, row.student_id)} ·{" "}
+                                {formatDateTimeCompact(row.created_at)}
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {showVLeagueCheerEventPanelNow && (
+                      <aside className="vleague-event-card" aria-label="이벤트 당첨">
+                        <div className="vleague-event-title">이벤트 당첨</div>
+                        <div className="vleague-event-sub">
+                          숨김 처리된 응원 작성자 중 자동 추첨
+                        </div>
+                        <div className="vleague-event-time">
+                          추첨 가능 시간: 경기 당일 13:01 ~ 14:00
+                        </div>
+                        <div className="vleague-event-hint">
+                          {vLeagueCheerAutoDrawInfo.enabled
+                            ? `${formatYmdKorean(vLeagueCheerAutoDrawInfo.drawYmd)} 자동 추첨 시간입니다.`
+                            : vLeagueCheerAutoDrawInfo.reason}
+                        </div>
+                        <div className="vleague-event-result">
+                          {myClassEventWinnerToday ? (
+                            <>
+                              <div className="vleague-event-result-label">오늘의 당첨자</div>
+                              <div className="vleague-event-winner-name">
+                                {formatStudentDisplayName(
+                                  myClassEventWinnerToday.winner_student_name,
+                                  myClassEventWinnerToday.winner_student_id
+                                )}
+                              </div>
+                              <div className="vleague-event-winner-meta">
+                                {vLeagueCheerWriterClassRow?.class_name || "학급"} ·{" "}
+                                {formatYmdKorean(myClassEventWinnerToday.match_date)} 추첨
+                              </div>
+                            </>
+                          ) : (
+                            <div className="vleague-event-result-empty">
+                              아직 자동 추첨 결과가 없습니다.
+                            </div>
+                          )}
+                        </div>
+                      </aside>
                     )}
                   </div>
                 </div>
@@ -4578,12 +5106,18 @@ function App() {
                       <div className="vleague-matches-controls">
                         <div className="vleague-matches-control-row">
                           <label className="vleague-field">
-                            <span>심판 등록(학생 이름)</span>
+                            <span>심판 등록(학번)</span>
                             <input
                               type="text"
-                              value={vLeagueRefereeNameDraft}
-                              onChange={(e) => setVLeagueRefereeNameDraft(e.target.value)}
-                              placeholder="예: 홍길동"
+                              inputMode="numeric"
+                              maxLength={6}
+                              value={vLeagueRefereeStudentIdDraft}
+                              onChange={(e) =>
+                                setVLeagueRefereeStudentIdDraft(
+                                  e.target.value.replace(/\D/g, "")
+                                )
+                              }
+                              placeholder="6자리 학번"
                             />
                           </label>
                           <button
@@ -4597,61 +5131,21 @@ function App() {
                         </div>
 
                         <div className="vleague-matches-control-row">
-                          <label className="vleague-field">
-                            <span>심판 학번</span>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              maxLength={6}
-                              value={vLeagueAssignStudentIdDraft}
-                              onChange={(e) =>
-                                setVLeagueAssignStudentIdDraft(
-                                  e.target.value.replace(/\D/g, "")
-                                )
-                              }
-                              placeholder="6자리 학번"
-                            />
-                          </label>
-                          <label className="vleague-field">
-                            <span>역할</span>
-                            <select
-                              value={vLeagueAssignRoleDraft}
-                              onChange={(e) => setVLeagueAssignRoleDraft(e.target.value)}
-                            >
-                              <option value="chief">주심</option>
-                              <option value="assistant1">부심1</option>
-                              <option value="assistant2">부심2</option>
-                            </select>
-                          </label>
-                          <label className="vleague-field vleague-field--wide">
-                            <span>배정 경기</span>
-                            <select
-                              value={vLeagueAssignMatchIdDraft}
-                              onChange={(e) => setVLeagueAssignMatchIdDraft(e.target.value)}
-                            >
-                              <option value="">경기 선택</option>
-                              {vLeagueCurrentLeagueMatches.map((m) => {
-                                const home = shortClassLabel(
-                                  vleagueClassNameById[m.home_class_id] || "학급"
-                                );
-                                const away = shortClassLabel(
-                                  vleagueClassNameById[m.away_class_id] || "학급"
-                                );
-                                return (
-                                  <option key={m.id} value={m.id}>
-                                    {`${m.match_date || "날짜미정"} · R${m.round_no} · ${home} vs ${away}`}
-                                  </option>
-                                );
-                              })}
-                            </select>
-                          </label>
+                          <div className="vleague-field vleague-field--compact">
+                            <span>대상 경기</span>
+                            <div className="vleague-matches-viewer-note">
+                              현재 리그 전체 경기 {vLeagueCurrentLeagueMatches.length}건
+                            </div>
+                          </div>
                           <button
                             type="button"
                             className="vleague-ghost"
                             disabled={vLeagueRefereeSaving}
                             onClick={handleAssignVLeagueReferee}
                           >
-                            {vLeagueRefereeSaving ? "배정 중..." : "경기 배정"}
+                            {vLeagueRefereeSaving
+                              ? "배정 중..."
+                              : "전체 경기 랜덤 배정(주심1/부심2)"}
                           </button>
                           <button
                             type="button"
@@ -4679,7 +5173,10 @@ function App() {
                         ) : (
                           vLeagueReferees.map((r) => (
                             <div key={r.id} className="vleague-cheer-item">
-                              <div className="vleague-cheer-msg">{r.student_name}</div>
+                              <div className="vleague-cheer-msg">
+                                {formatStudentDisplayName(r.student_name, r.student_id)} (
+                                {r.student_id || "-"})
+                              </div>
                               <div className="vleague-cheer-meta">
                                 등록일 · {formatDateTimeCompact(r.created_at)}
                               </div>
@@ -4709,7 +5206,9 @@ function App() {
                             return (
                               <div key={a.id} className="vleague-cheer-item">
                                 <div className="vleague-cheer-msg">
-                                  [{getRefereeRoleLabel(a.assignment_role)}] {a.student_name} ({a.student_id})
+                                  [{getRefereeRoleLabel(a.assignment_role)}]{" "}
+                                  {formatStudentDisplayName(a.student_name, a.student_id)} (
+                                  {a.student_id})
                                 </div>
                                 <div className="vleague-cheer-meta">{matchText}</div>
                               </div>
@@ -4718,6 +5217,46 @@ function App() {
                         )}
                       </div>
                     </>
+                  )}
+                </div>
+              )}
+
+              {clubTab === "vRules" && isVLeagueClub(page.clubName) && (
+                <div className="club-page-body">
+                  <div className="vleague-section-head">
+                    <div className="vleague-section-title">V리그 규칙 관리</div>
+                    <p className="vleague-section-desc">
+                      종목 페이지 입장 시 자동 팝업으로 노출됩니다.
+                    </p>
+                  </div>
+                  {vLeagueRuleLoading ? (
+                    <div className="cal-loading">규칙 불러오는 중...</div>
+                  ) : (
+                    <div className="vleague-cheer-wrap">
+                      {isVLeagueAdmin ? (
+                        <div className="vleague-cheer-form" style={{ flexDirection: "column" }}>
+                          <textarea
+                            className="vleague-cheer-input"
+                            style={{ minHeight: 140, width: "100%", resize: "vertical" }}
+                            value={vLeagueRuleDraft}
+                            onChange={(e) => setVLeagueRuleDraft(e.target.value)}
+                            placeholder="V리그 규칙을 입력하세요."
+                          />
+                          <button
+                            type="button"
+                            className="vleague-cheer-save"
+                            disabled={vLeagueRuleSaving}
+                            onClick={handleSaveVLeagueRuleText}
+                          >
+                            {vLeagueRuleSaving ? "저장 중..." : "규칙 저장"}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="vleague-cheer-head">
+                          {vLeagueRuleText || "등록된 규칙이 없습니다."}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -4775,7 +5314,7 @@ function App() {
                                 {formatHomeroom(s.student_id)}
                               </div>
                               <div className="attendance-name">
-                                {s.student_name}
+                                {formatStudentDisplayName(s.student_name, s.student_id)}
                               </div>
                             </div>
 
@@ -4951,7 +5490,8 @@ function App() {
                                   {formatTimeMs(r.time_ms)}초
                                 </div>
                                 <div className="records-who">
-                                  {formatHomeroom(r.student_id)} {r.student_name}
+                                  {formatHomeroom(r.student_id)}{" "}
+                                  {formatStudentDisplayName(r.student_name, r.student_id)}
                                 </div>
                               </div>
                               {r.photo_url ? (
@@ -5006,7 +5546,12 @@ function App() {
                         {applications.map((app) => (
                           <tr key={app.id}>
                             <td data-label="학번">{app[appCols.student_id]}</td>
-                            <td data-label="이름">{app[appCols.student_name]}</td>
+                            <td data-label="이름">
+                              {formatStudentDisplayName(
+                                app[appCols.student_name],
+                                app[appCols.student_id]
+                              )}
+                            </td>
                             <td data-label="신청 시간">
                               {formatDateTimeCompact(app.created_at)}
                             </td>
@@ -5049,6 +5594,34 @@ function App() {
             </div>
           )}
         </main>
+        {showVLeagueRulePopup &&
+          page.type === "clubMain" &&
+          isVLeagueClub(page.clubName) && (
+            <div
+              className="vleague-rule-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-label="새샘 V리그 규칙"
+            >
+              <div className="vleague-rule-modal">
+                <div className="vleague-rule-title">새샘 V리그 규칙</div>
+                <div className="vleague-rule-body">
+                  {vLeagueRuleLoading
+                    ? "규칙을 불러오는 중..."
+                    : vLeagueRuleText || "등록된 규칙이 없습니다."}
+                </div>
+                <div className="vleague-rule-actions">
+                  <button
+                    type="button"
+                    className="vleague-ghost"
+                    onClick={() => setShowVLeagueRulePopup(false)}
+                  >
+                    확인
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
       </div>
     );
   }

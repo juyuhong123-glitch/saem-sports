@@ -282,7 +282,7 @@ body {
 }
 
 .sport-tab {
-  border-radius: 999px;
+  border-radius: 16px;
   border: none;
   padding: 16px 18px;
   font-size: 16px;
@@ -728,6 +728,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 6px;
   width: 100%;
   /* 가로 패딩 5px→2px로 줄인 3px 중 절반(1.5px)만 복구 → 약 4px */
@@ -742,7 +743,7 @@ body {
   border-radius: 10px;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
   letter-spacing: -0.1px;
-  white-space: nowrap;
+  white-space: normal;
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -769,10 +770,35 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: center;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 900;
+  color: #0b1220;
+  letter-spacing: 0.01em;
+  text-shadow:
+    0 0 0 rgba(250, 204, 21, 0),
+    0 0 0 rgba(147, 197, 253, 0);
+  animation: vleague-title-sparkle 1.2s ease-in-out infinite;
+}
+
+@keyframes vleague-title-sparkle {
+  0%,
+  100% {
+    text-shadow:
+      0 0 0 rgba(250, 204, 21, 0),
+      0 0 0 rgba(147, 197, 253, 0);
+  }
+  50% {
+    text-shadow:
+      0 0 12px rgba(250, 204, 21, 0.95),
+      0 0 22px rgba(147, 197, 253, 1),
+      0 0 30px rgba(167, 139, 250, 0.9);
+  }
 }
 
 .sport-vleague-board-head-item-ref {
   display: block;
+  flex: 0 0 100%;
   width: 100%;
   margin-top: 1px;
   text-align: right;
@@ -1114,6 +1140,44 @@ body {
   filter: saturate(1.08);
 }
 
+.sport-vleague-event-pill {
+  margin-top: 8px;
+  width: min(88vw, 560px);
+  border-radius: 12px;
+  border: 1px solid #fed7aa;
+  background: linear-gradient(155deg, #fff7ed, #ffffff 56%);
+  box-shadow: 0 6px 16px rgba(251, 146, 60, 0.18);
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.sport-vleague-event-pill-title {
+  font-size: 11px;
+  font-weight: 900;
+  color: #9a3412;
+}
+
+.sport-vleague-event-pill-body {
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sport-vleague-event-pill-date {
+  font-size: 11px;
+  font-weight: 800;
+  color: #c2410c;
+}
+
+.sport-vleague-event-pill-name {
+  font-size: 14px;
+  font-weight: 900;
+  color: #7c2d12;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sport-vleague-board {
     animation: none;
@@ -1126,6 +1190,10 @@ body {
   .sport-vleague-board::after {
     animation: none;
     opacity: 0;
+  }
+
+  .sport-vleague-board-head-item-text {
+    animation: none;
   }
 
   /* strip transition은 여기서 끄지 않음 — !important가 인라인 transition까지 무력화되어 슬라이드가 멈춤 */
@@ -1171,6 +1239,10 @@ body {
     line-height: 1.35;
   }
 
+  .sport-vleague-board-head-item-text {
+    font-size: 13px;
+  }
+
   .sport-vleague-board-head-item--has-match {
     padding-left: 6px;
   }
@@ -1198,6 +1270,15 @@ body {
     max-width: 62px;
     padding: 2px 6px;
     line-height: 1.3;
+  }
+
+  .sport-vleague-event-pill {
+    width: min(94vw, 320px);
+    padding: 7px 9px;
+  }
+
+  .sport-vleague-event-pill-name {
+    font-size: 12px;
   }
 }
 
@@ -1783,6 +1864,7 @@ body {
   font-size: 12px;
   font-weight: 800;
   color: #475569;
+  text-align: right;
 }
 
 .activity-empty {
@@ -1866,6 +1948,10 @@ body {
   margin-bottom: 14px;
 }
 
+.vleague-section-head--center {
+  text-align: center;
+}
+
 .vleague-section-title {
   font-weight: 900;
   font-size: 17px;
@@ -1930,14 +2016,21 @@ body {
   border: 1px solid rgba(226, 232, 240, 0.9);
 }
 
-.vleague-field--wide {
-  flex: 1 1 360px;
-  justify-content: space-between;
+
+.vleague-field--compact {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  gap: 6px;
 }
 
-.vleague-field--wide input {
-  flex: 1 1 auto;
-  min-width: 220px;
+.vleague-field--compact .vleague-matches-viewer-note {
+  margin-top: 0;
+  padding: 5px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .vleague-field--hint {
@@ -2237,6 +2330,22 @@ body {
   white-space: nowrap;
 }
 
+.vleague-postpone-undo-btn {
+  border: 1px solid rgba(148, 163, 184, 0.85);
+  background: #ffffff;
+  color: #334155;
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .vleague-match-actions {
   display: inline-flex;
   align-items: center;
@@ -2523,6 +2632,13 @@ body {
   padding: 12px;
 }
 
+.vleague-cheer-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+  gap: 12px;
+  align-items: start;
+}
+
 .vleague-cheer-head {
   font-size: 14px;
   font-weight: 900;
@@ -2554,6 +2670,53 @@ body {
   cursor: pointer;
 }
 
+.vleague-rule-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 16px;
+}
+
+.vleague-rule-modal {
+  width: min(92vw, 540px);
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.2);
+  padding: 14px 14px 12px;
+}
+
+.vleague-rule-title {
+  font-size: 16px;
+  font-weight: 900;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.vleague-rule-body {
+  max-height: min(58vh, 420px);
+  overflow: auto;
+  white-space: pre-wrap;
+  text-align: left;
+  line-height: 1.45;
+  font-size: 14px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.vleague-rule-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .vleague-cheer-list {
   display: flex;
   flex-direction: column;
@@ -2581,10 +2744,129 @@ body {
   font-weight: 700;
 }
 
+.vleague-event-card {
+  background: linear-gradient(160deg, #fff7ed, #f8fafc 60%);
+  border: 1px solid #fdba74;
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 8px 18px rgba(251, 146, 60, 0.14);
+  text-align: center;
+}
+
+.vleague-event-title {
+  font-size: 16px;
+  font-weight: 900;
+  color: #9a3412;
+  margin-bottom: 4px;
+}
+
+.vleague-event-sub {
+  font-size: 12px;
+  font-weight: 800;
+  color: #c2410c;
+}
+
+.vleague-event-time {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #7c2d12;
+}
+
+.vleague-event-draw-btn {
+  width: 100%;
+  margin-top: 10px;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(90deg, #f97316, #ef4444);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  transition:
+    transform 0.14s ease,
+    box-shadow 0.2s ease,
+    opacity 0.2s ease;
+  box-shadow: 0 6px 14px rgba(239, 68, 68, 0.26);
+}
+
+.vleague-event-draw-btn:hover:enabled {
+  transform: translateY(-1px);
+}
+
+.vleague-event-draw-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+.vleague-event-hint {
+  margin-top: 8px;
+  min-height: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #9a3412;
+}
+
+.vleague-event-result {
+  margin-top: 10px;
+  background: #ffffff;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+}
+
+.vleague-event-result-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: #9a3412;
+}
+
+.vleague-event-winner-name {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 900;
+  color: #7c2d12;
+}
+
+.vleague-event-winner-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #b45309;
+}
+
+.vleague-event-result-empty {
+  font-size: 12px;
+  font-weight: 700;
+  color: #92400e;
+}
+
 .vleague-class-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.vleague-classes-body .vleague-grade-tabs {
+  max-width: min(100%, 560px);
+}
+
+.vleague-classes-body .vleague-class-list {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.vleague-classes-body .vleague-class-left {
+  min-width: 130px;
+  text-align: center;
+}
+
+.vleague-classes-body .vleague-class-stats--right {
+  min-width: 130px;
+  text-align: center;
 }
 
 .vleague-class-row {
@@ -3266,6 +3548,10 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .vleague-cheer-layout {
+    grid-template-columns: 1fr;
+  }
+
   .page-header {
     align-items: flex-start;
     flex-direction: column;
@@ -3276,7 +3562,90 @@ body {
     position: static;
     transform: none;
     width: 100%;
-    text-align: left;
+    text-align: center;
+  }
+
+  .vleague-round-list {
+    gap: 8px;
+  }
+
+  .vleague-round-card {
+    border-radius: 10px;
+    padding: 7px 8px;
+  }
+
+  .vleague-round-head {
+    font-size: 12px;
+  }
+
+  .vleague-round-count {
+    font-size: 11px;
+  }
+
+  .vleague-match-list {
+    gap: 6px;
+    margin-top: 7px;
+  }
+
+  .vleague-match-row {
+    gap: 6px;
+    border-radius: 10px;
+    padding: 7px 8px;
+  }
+
+  .vleague-match-title {
+    font-size: 12px;
+    line-height: 1.25;
+  }
+
+  .vleague-vs {
+    margin: 0 4px;
+  }
+
+  .vleague-match-meta {
+    margin-top: 2px;
+    font-size: 11px;
+  }
+
+  .vleague-match-actions {
+    gap: 5px;
+  }
+
+  .vleague-result-inputs {
+    gap: 4px;
+    padding: 4px 5px;
+  }
+
+  .vleague-score-input {
+    width: 44px;
+    padding: 4px 5px;
+    font-size: 11px;
+  }
+
+  .vleague-win-input {
+    width: 64px;
+  }
+
+  .vleague-score-sep {
+    font-size: 11px;
+  }
+
+  .vleague-winner-live {
+    min-width: 72px;
+    font-size: 11px;
+  }
+
+  .vleague-result-save,
+  .vleague-match-postpone,
+  .vleague-match-badge {
+    padding: 5px 7px;
+    font-size: 11px;
+  }
+
+  .vleague-postpone-undo-btn {
+    width: 27px;
+    height: 27px;
+    font-size: 14px;
   }
 
   .schedule-layout {
