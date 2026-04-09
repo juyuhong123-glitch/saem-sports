@@ -771,6 +771,19 @@ body {
   text-align: center;
 }
 
+.sport-vleague-board-head-item-ref {
+  display: block;
+  width: 100%;
+  margin-top: 1px;
+  text-align: right;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sport-vleague-board-head-item--malgeun {
   border-color: rgba(56, 189, 248, 0.35);
   background: #f0f9ff;
@@ -1765,6 +1778,13 @@ body {
   font-size: 14.5px;
 }
 
+.activity-item-referee {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #475569;
+}
+
 .activity-empty {
   color: #64748b;
   font-size: 14px;
@@ -2063,6 +2083,16 @@ body {
 }
 
 .vleague-field input {
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.vleague-field select {
   border: 1px solid rgba(203, 213, 225, 0.9);
   border-radius: 10px;
   padding: 6px 10px;

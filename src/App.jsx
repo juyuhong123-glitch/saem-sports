@@ -114,7 +114,7 @@ function App() {
   const [mainMsg, setMainMsg] = useState("");
   const [myAppByClubId, setMyAppByClubId] = useState({}); // 학생: { [clubId]: {status, id} }
   const [page, setPage] = useState({ type: "home", clubName: null }); // home | clubMain | clubManage
-  const [clubTab, setClubTab] = useState("schedule"); // schedule | members | attendance | records | vClasses | vStandings
+  const [clubTab, setClubTab] = useState("schedule"); // schedule | members | attendance | records | vClasses | vStandings | vReferee
   const [membersLoading, setMembersLoading] = useState(false);
   const [vLeagueClasses, setVLeagueClasses] = useState([]);
   const [vLeagueClassesError, setVLeagueClassesError] = useState(null);
@@ -138,7 +138,10 @@ function App() {
   });
   const [vLeagueGenGamesPerDay, setVLeagueGenGamesPerDay] = useState(2);
   const [vLeagueGenApplyDates, setVLeagueGenApplyDates] = useState(true);
-  const [vLeagueExcludeDates, setVLeagueExcludeDates] = useState([]); // ['YYYY-MM-DD', ...]
+  const [vLeagueExcludeDatesByLeague, setVLeagueExcludeDatesByLeague] = useState({
+    malgeun: [],
+    goun: [],
+  }); // { malgeun: ['YYYY-MM-DD', ...], goun: ['YYYY-MM-DD', ...] }
   const [vLeagueExcludeOpen, setVLeagueExcludeOpen] = useState(false);
   const [vLeagueExcludeMonth, setVLeagueExcludeMonth] = useState(() => {
     const d = new Date();
@@ -147,6 +150,10 @@ function App() {
   const [vLeagueSavingMatches, setVLeagueSavingMatches] = useState(false);
   const [vLeaguePushingToCalendar, setVLeaguePushingToCalendar] = useState(false);
   const [vLeagueSyncingCalendar, setVLeagueSyncingCalendar] = useState(false);
+  const [vLeagueDeletingMatchesAll, setVLeagueDeletingMatchesAll] = useState(false);
+  const [vLeagueBulkPostponeDate, setVLeagueBulkPostponeDate] = useState("");
+  const [vLeagueBulkPostponing, setVLeagueBulkPostponing] = useState(false);
+  const [vLeagueValidating, setVLeagueValidating] = useState(false);
   const [vLeagueResultDrafts, setVLeagueResultDrafts] = useState({});
   const [vLeagueResultSavingId, setVLeagueResultSavingId] = useState(null);
   const [vLeagueCheerDraft, setVLeagueCheerDraft] = useState("");
@@ -164,6 +171,18 @@ function App() {
     malgeun: "",
     goun: "",
   });
+  const [vLeagueTodayMatchIds, setVLeagueTodayMatchIds] = useState({
+    malgeun: null,
+    goun: null,
+  });
+  const [vLeagueReferees, setVLeagueReferees] = useState([]);
+  const [vLeagueRefereeAssignments, setVLeagueRefereeAssignments] = useState([]);
+  const [vLeagueRefereeLoading, setVLeagueRefereeLoading] = useState(false);
+  const [vLeagueRefereeNameDraft, setVLeagueRefereeNameDraft] = useState("");
+  const [vLeagueAssignStudentIdDraft, setVLeagueAssignStudentIdDraft] = useState("");
+  const [vLeagueAssignMatchIdDraft, setVLeagueAssignMatchIdDraft] = useState("");
+  const [vLeagueAssignRoleDraft, setVLeagueAssignRoleDraft] = useState("chief");
+  const [vLeagueRefereeSaving, setVLeagueRefereeSaving] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -304,21 +323,57 @@ function App() {
     return day === 0 || day === 6;
   };
 
-  const vLeagueExcludedDateSet = useMemo(() => {
-    const set = new Set();
-    for (const ymd of vLeagueExcludeDates || []) {
-      if (/^\d{4}-\d{2}-\d{2}$/.test(String(ymd))) set.add(String(ymd));
-    }
-    return set;
-  }, [vLeagueExcludeDates]);
+  const getVLeagueExcludeDates = useCallback(
+    (leagueKey) =>
+      leagueKey === "goun"
+        ? vLeagueExcludeDatesByLeague.goun || []
+        : vLeagueExcludeDatesByLeague.malgeun || [],
+    [vLeagueExcludeDatesByLeague]
+  );
 
-  const toggleVLeagueExcludeDate = (ymd) => {
+  const vLeagueCurrentExcludeDates = useMemo(
+    () => getVLeagueExcludeDates(vLeagueGradeTab),
+    [getVLeagueExcludeDates, vLeagueGradeTab]
+  );
+  const vLeagueExcludedDateSetByLeague = useMemo(() => {
+    const toSet = (list) => {
+      const set = new Set();
+      for (const ymd of list || []) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(ymd))) set.add(String(ymd));
+      }
+      return set;
+    };
+    return {
+      malgeun: toSet(vLeagueExcludeDatesByLeague.malgeun),
+      goun: toSet(vLeagueExcludeDatesByLeague.goun),
+    };
+  }, [vLeagueExcludeDatesByLeague]);
+
+  const getVLeagueExcludedDateSet = useCallback(
+    (leagueKey) =>
+      leagueKey === "goun"
+        ? vLeagueExcludedDateSetByLeague.goun
+        : vLeagueExcludedDateSetByLeague.malgeun,
+    [vLeagueExcludedDateSetByLeague]
+  );
+
+  const vLeagueCurrentExcludedDateSet = useMemo(
+    () => getVLeagueExcludedDateSet(vLeagueGradeTab),
+    [getVLeagueExcludedDateSet, vLeagueGradeTab]
+  );
+
+  const toggleVLeagueExcludeDate = (leagueKey, ymd) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(ymd))) return;
-    setVLeagueExcludeDates((prev) => {
-      const set = new Set(prev || []);
+    setVLeagueExcludeDatesByLeague((prev) => {
+      const key = leagueKey === "goun" ? "goun" : "malgeun";
+      const set = new Set(prev?.[key] || []);
       if (set.has(ymd)) set.delete(ymd);
       else set.add(ymd);
-      return Array.from(set).sort();
+      return {
+        malgeun: prev?.malgeun || [],
+        goun: prev?.goun || [],
+        [key]: Array.from(set).sort(),
+      };
     });
   };
 
@@ -336,7 +391,8 @@ function App() {
     return cells;
   };
 
-  const nextPlayableYmd = (ymd) => {
+  const nextPlayableYmd = (ymd, leagueKey = vLeagueGradeTab) => {
+    const excluded = getVLeagueExcludedDateSet(leagueKey);
     let cur = ymd;
     // 안전장치: 무한루프 방지(최대 366번 스킵)
     for (let i = 0; i < 366; i += 1) {
@@ -345,7 +401,7 @@ function App() {
         cur = addDaysYmd(cur, 1);
         continue;
       }
-      if (vLeagueExcludedDateSet.has(cur)) {
+      if (excluded.has(cur)) {
         cur = addDaysYmd(cur, 1);
         continue;
       }
@@ -947,6 +1003,56 @@ function App() {
     return map;
   }, [vLeagueClasses]);
 
+  const vLeagueCurrentLeagueMatches = useMemo(() => {
+    return (vLeagueMatches || [])
+      .filter((m) => m.league === vLeagueGradeTab && Boolean(m.id))
+      .sort((a, b) => {
+        const ad = String(a.match_date || "");
+        const bd = String(b.match_date || "");
+        if (ad !== bd) return ad.localeCompare(bd);
+        if ((a.round_no || 0) !== (b.round_no || 0)) {
+          return (a.round_no || 0) - (b.round_no || 0);
+        }
+        return (a.match_no || 0) - (b.match_no || 0);
+      });
+  }, [vLeagueMatches, vLeagueGradeTab]);
+
+  const vLeagueMatchById = useMemo(() => {
+    const map = new Map();
+    for (const m of vLeagueMatches || []) map.set(m.id, m);
+    return map;
+  }, [vLeagueMatches]);
+
+  const vLeagueRefereeAssignmentsByMatch = useMemo(() => {
+    const map = new Map();
+    for (const a of vLeagueRefereeAssignments || []) {
+      if (!a?.match_id) continue;
+      if (!map.has(a.match_id)) map.set(a.match_id, []);
+      map.get(a.match_id).push(a);
+    }
+    return map;
+  }, [vLeagueRefereeAssignments]);
+
+  const getRefereeRoleLabel = (role) => {
+    if (role === "chief") return "주심";
+    if (role === "assistant1") return "부심1";
+    if (role === "assistant2") return "부심2";
+    return "심판";
+  };
+
+  const getRefereeSummaryByMatchId = useCallback(
+    (matchId) => {
+      if (!matchId) return "";
+      const rows = vLeagueRefereeAssignmentsByMatch.get(matchId) || [];
+      if (rows.length === 0) return "";
+      const chief = rows.find((r) => r.assignment_role === "chief")?.student_name || "-";
+      const as1 = rows.find((r) => r.assignment_role === "assistant1")?.student_name || "-";
+      const as2 = rows.find((r) => r.assignment_role === "assistant2")?.student_name || "-";
+      return `주심 ${chief} · 부심 ${as1}, ${as2}`;
+    },
+    [vLeagueRefereeAssignmentsByMatch]
+  );
+
   const getComputedStandingsByLeague = useCallback(
     (leagueKey) => {
       const { malgeun, goun } = splitVLeagueClassesByGrade(vLeagueClasses || []);
@@ -1136,6 +1242,7 @@ function App() {
     const vLeagueClub = getClubByName(V_LEAGUE_LABEL);
     if (!vLeagueClub?.id) {
       setVLeagueTodayMatches({ malgeun: "", goun: "" });
+      setVLeagueTodayMatchIds({ malgeun: null, goun: null });
       return;
     }
     const today = toYmd(new Date());
@@ -1146,13 +1253,14 @@ function App() {
     const classMap = new Map((classes || []).map((c) => [c.id, c.class_name]));
     const { data: matches, error } = await supabase
       .from("vleague_matches")
-      .select("home_class_id, away_class_id, match_date, league")
+      .select("id, home_class_id, away_class_id, match_date, league")
       .eq("club_id", vLeagueClub.id)
       .eq("match_date", today)
       .order("match_no", { ascending: true })
       .limit(100);
     if (error || !matches || matches.length === 0) {
       setVLeagueTodayMatches({ malgeun: "", goun: "" });
+      setVLeagueTodayMatchIds({ malgeun: null, goun: null });
       return;
     }
     const firstMalgeun = matches.find((m) => m.league === "malgeun") || null;
@@ -1167,7 +1275,44 @@ function App() {
       malgeun: toMatchText(firstMalgeun, "맑은샘"),
       goun: toMatchText(firstGoun, "고운샘"),
     });
+    setVLeagueTodayMatchIds({
+      malgeun: firstMalgeun?.id || null,
+      goun: firstGoun?.id || null,
+    });
   }, [clubs]);
+
+  const loadVLeagueRefereeData = useCallback(async (clubId) => {
+    if (!clubId) {
+      setVLeagueReferees([]);
+      setVLeagueRefereeAssignments([]);
+      return;
+    }
+    setVLeagueRefereeLoading(true);
+    const [{ data: refs, error: refErr }, { data: assigns, error: assignErr }] =
+      await Promise.all([
+        supabase
+          .from("vleague_referees")
+          .select("id, student_name, created_at")
+          .eq("club_id", clubId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("vleague_referee_assignments")
+          .select("id, match_id, student_id, student_name, assignment_role, created_at")
+          .eq("club_id", clubId)
+          .order("created_at", { ascending: false }),
+      ]);
+    setVLeagueRefereeLoading(false);
+    if (refErr || assignErr) {
+      setMainMsg(
+        `심판 데이터 로딩 실패: ${(refErr || assignErr)?.message || "unknown error"}`
+      );
+      setVLeagueReferees([]);
+      setVLeagueRefereeAssignments([]);
+      return;
+    }
+    setVLeagueReferees(refs || []);
+    setVLeagueRefereeAssignments(assigns || []);
+  }, []);
 
   useEffect(() => {
     loadVLeagueCheerBoard();
@@ -1231,6 +1376,32 @@ function App() {
     loadVLeagueCheers(club.id);
   }, [page.type, clubTab, page.clubName, clubs, loadVLeagueCheers, loadVLeagueMatches]);
 
+  useEffect(() => {
+    if (page.type !== "clubMain" || clubTab !== "vReferee") return;
+    if (!isVLeagueClub(page.clubName)) return;
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
+    loadVLeagueMatches(club.id);
+    loadVLeagueClasses(club.id);
+    loadVLeagueRefereeData(club.id);
+  }, [
+    page.type,
+    clubTab,
+    page.clubName,
+    clubs,
+    loadVLeagueMatches,
+    loadVLeagueClasses,
+    loadVLeagueRefereeData,
+  ]);
+
+  useEffect(() => {
+    const vLeagueClub = getClubByName(V_LEAGUE_LABEL);
+    if (!vLeagueClub?.id) return;
+    if (page.type === "home" || (page.type === "clubMain" && isVLeagueClub(page.clubName))) {
+      loadVLeagueRefereeData(vLeagueClub.id);
+    }
+  }, [page.type, page.clubName, clubs, loadVLeagueRefereeData]);
+
   const handleCreateVLeagueCheer = async () => {
     setMainMsg("");
     if (currentUser?.role !== "student" && currentUser?.role !== "teacher") return;
@@ -1283,6 +1454,186 @@ function App() {
     setMainMsg("우리 반 응원 글을 등록했습니다.");
   };
 
+  const handleRegisterVLeagueReferee = async () => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("심판 등록은 관리자(홍준영)만 가능합니다.");
+      return;
+    }
+    const name = String(vLeagueRefereeNameDraft || "").trim();
+    if (!name) {
+      setMainMsg("심판 이름을 입력해 주세요.");
+      return;
+    }
+    if (name.length > 20) {
+      setMainMsg("심판 이름은 20자 이내로 입력해 주세요.");
+      return;
+    }
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
+    setVLeagueRefereeSaving(true);
+    try {
+      const { error } = await supabase.from("vleague_referees").insert([
+        {
+          club_id: club.id,
+          student_name: name,
+        },
+      ]);
+      if (error) {
+        setMainMsg(`심판 등록 실패: ${error.message}`);
+        return;
+      }
+      setVLeagueRefereeNameDraft("");
+      await loadVLeagueRefereeData(club.id);
+      setMainMsg("심판이 등록되었습니다.");
+    } finally {
+      setVLeagueRefereeSaving(false);
+    }
+  };
+
+  const handleAssignVLeagueReferee = async () => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("경기 배정은 관리자(홍준영)만 가능합니다.");
+      return;
+    }
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
+    const studentId = String(vLeagueAssignStudentIdDraft || "").replace(/\D/g, "");
+    if (!/^\d{6}$/.test(studentId)) {
+      setMainMsg("심판 학번 6자리를 입력해 주세요.");
+      return;
+    }
+    const matchId = String(vLeagueAssignMatchIdDraft || "").trim();
+    if (!matchId) {
+      setMainMsg("배정할 경기를 선택해 주세요.");
+      return;
+    }
+    const match = (vLeagueMatches || []).find((m) => m.id === matchId);
+    if (!match) {
+      setMainMsg("선택한 경기를 찾을 수 없습니다.");
+      return;
+    }
+    const className = formatClassNameFromStudentId(studentId);
+    if (!className) {
+      setMainMsg("유효한 학번 형식이 아닙니다.");
+      return;
+    }
+    const homeClass = vleagueClassNameById[match.home_class_id] || "";
+    const awayClass = vleagueClassNameById[match.away_class_id] || "";
+    const classNorm = normalizeClubName(className);
+    if (
+      normalizeClubName(homeClass) === classNorm ||
+      normalizeClubName(awayClass) === classNorm
+    ) {
+      setMainMsg("본인 학급 경기는 심판으로 배정할 수 없습니다.");
+      return;
+    }
+    const { data: stu, error: stuErr } = await supabase
+      .from("students")
+      .select("student_id, name")
+      .eq("student_id", studentId)
+      .maybeSingle();
+    if (stuErr || !stu) {
+      setMainMsg("해당 학번 학생을 찾을 수 없습니다.");
+      return;
+    }
+    const studentName = String(stu.name || "").trim();
+    if (!studentName) {
+      setMainMsg("학생 이름을 찾을 수 없습니다.");
+      return;
+    }
+    const isRegistered = (vLeagueReferees || []).some(
+      (r) => normalizeTeacherName(r.student_name) === normalizeTeacherName(studentName)
+    );
+    if (!isRegistered) {
+      setMainMsg("먼저 심판 등록에서 학생 이름을 등록해 주세요.");
+      return;
+    }
+    const role = String(vLeagueAssignRoleDraft || "");
+    if (!["chief", "assistant1", "assistant2"].includes(role)) {
+      setMainMsg("심판 역할을 선택해 주세요.");
+      return;
+    }
+    const sameMatchRows = (vLeagueRefereeAssignmentsByMatch.get(matchId) || []);
+    if (sameMatchRows.some((a) => a.assignment_role === role)) {
+      setMainMsg(`${getRefereeRoleLabel(role)}은(는) 이미 배정되어 있습니다.`);
+      return;
+    }
+    if (sameMatchRows.some((a) => a.student_id === studentId)) {
+      setMainMsg("같은 경기에서 한 학생을 중복 배정할 수 없습니다.");
+      return;
+    }
+    const targetDate = String(match.match_date || "");
+    if (targetDate) {
+      const sameDayAssigned = (vLeagueRefereeAssignments || []).some((a) => {
+        if (a.student_id !== studentId) return false;
+        const am = vLeagueMatchById.get(a.match_id);
+        return String(am?.match_date || "") === targetDate;
+      });
+      if (sameDayAssigned) {
+        setMainMsg("해당 학생은 같은 날짜에 이미 다른 경기 심판으로 배정되어 있습니다.");
+        return;
+      }
+    }
+    if (sameMatchRows.length >= 3) {
+      setMainMsg("해당 경기는 이미 심판 3명이 배정되어 있습니다.");
+      return;
+    }
+    setVLeagueRefereeSaving(true);
+    try {
+      const { error } = await supabase.from("vleague_referee_assignments").insert([
+        {
+          club_id: club.id,
+          match_id: matchId,
+          student_id: studentId,
+          student_name: studentName,
+          assignment_role: role,
+        },
+      ]);
+      if (error) {
+        setMainMsg(`심판 배정 실패: ${error.message}`);
+        return;
+      }
+      setVLeagueAssignStudentIdDraft("");
+      setVLeagueAssignMatchIdDraft("");
+      setVLeagueAssignRoleDraft("chief");
+      await loadVLeagueRefereeData(club.id);
+      setMainMsg("심판 배정을 저장했습니다.");
+    } finally {
+      setVLeagueRefereeSaving(false);
+    }
+  };
+
+  const handleDeleteAllVLeagueRefereeAssignments = async () => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("배정 삭제는 관리자(홍준영)만 가능합니다.");
+      return;
+    }
+    const club = getClubByName(page.clubName);
+    if (!club?.id) return;
+    const ok = window.confirm(
+      "심판 배정을 전체 삭제할까요?\n\n- vleague_referee_assignments 데이터가 모두 삭제됩니다."
+    );
+    if (!ok) return;
+    setVLeagueRefereeSaving(true);
+    try {
+      const { error } = await supabase
+        .from("vleague_referee_assignments")
+        .delete()
+        .eq("club_id", club.id);
+      if (error) {
+        setMainMsg(`배정 전체 삭제 실패: ${error.message}`);
+        return;
+      }
+      await loadVLeagueRefereeData(club.id);
+      setMainMsg("심판 배정을 전체 삭제했습니다.");
+    } finally {
+      setVLeagueRefereeSaving(false);
+    }
+  };
+
   const generateRoundRobin = (teams) => {
     const list = [...(teams || [])];
     if (list.length < 2) return [];
@@ -1322,7 +1673,9 @@ function App() {
     const flat = [];
     let globalMatchNo = 1;
     let gamesToday = 0;
-    let curDate = vLeagueGenApplyDates ? nextPlayableYmd(vLeagueGenStartDate) : null;
+    let curDate = vLeagueGenApplyDates
+      ? nextPlayableYmd(vLeagueGenStartDate, leagueKey)
+      : null;
     for (let r = 0; r < rounds.length; r += 1) {
       const roundNo = r + 1;
       for (let m = 0; m < rounds[r].length; m += 1) {
@@ -1331,7 +1684,7 @@ function App() {
         if (vLeagueGenApplyDates) {
           const perDay = Math.max(1, Number(vLeagueGenGamesPerDay || 1));
           if (gamesToday >= perDay) {
-            curDate = nextPlayableYmd(addDaysYmd(curDate, 1));
+            curDate = nextPlayableYmd(addDaysYmd(curDate, 1), leagueKey);
             gamesToday = 0;
           }
           matchDate = curDate;
@@ -1352,7 +1705,7 @@ function App() {
       }
       if (vLeagueGenApplyDates) {
         // 다음 라운드는 다음날부터 시작되게(가독성)
-        curDate = nextPlayableYmd(addDaysYmd(curDate, 1));
+        curDate = nextPlayableYmd(addDaysYmd(curDate, 1), leagueKey);
         gamesToday = 0;
       }
     }
@@ -1561,6 +1914,66 @@ function App() {
     }
   };
 
+  const handleDeleteAllVLeagueMatchesFromSupabase = async () => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("대진표 전체 삭제는 관리자(홍준영)만 가능합니다.");
+      return;
+    }
+    if (!page.clubName) return;
+    const club = getClubByName(page.clubName);
+    if (!club) return;
+    const ok = window.confirm(
+      "새샘 V리그 대진표를 Supabase에서 전체 삭제할까요?\n\n- 맑은샘/고운샘 모든 경기(vleague_matches)가 삭제됩니다.\n- 일정에 반영된 V리그 경기(club_events)도 함께 삭제됩니다.\n- 이 작업은 되돌릴 수 없습니다."
+    );
+    if (!ok) return;
+
+    setVLeagueDeletingMatchesAll(true);
+    try {
+      const { error } = await supabase
+        .from("vleague_matches")
+        .delete()
+        .eq("club_id", club.id);
+      if (error) {
+        setMainMsg(`대진표 전체 삭제 실패: ${error.message}`);
+        return;
+      }
+      const { data: allEvents, error: loadEventsErr } = await supabase
+        .from("club_events")
+        .select("id, content")
+        .eq("club_id", club.id);
+      if (loadEventsErr) {
+        setMainMsg(`일정 조회 실패: ${loadEventsErr.message}`);
+        return;
+      }
+      const vLeagueEventIds = (allEvents || [])
+        .filter((ev) => {
+          const c = String(ev.content || "");
+          return c.startsWith("[맑은샘]") || c.startsWith("[고운샘]");
+        })
+        .map((ev) => ev.id);
+      if (vLeagueEventIds.length > 0) {
+        const { error: delEventsErr } = await supabase
+          .from("club_events")
+          .delete()
+          .in("id", vLeagueEventIds);
+        if (delEventsErr) {
+          setMainMsg(`일정 삭제 실패: ${delEventsErr.message}`);
+          return;
+        }
+      }
+      setVLeagueMatchesDraft(null);
+      setVLeagueResultDrafts({});
+      await loadVLeagueMatches(club.id);
+      await loadEventsForMonth(club.id, calendarMonth);
+      setMainMsg(
+        `새샘 V리그 대진표 전체 삭제 완료: 대진표(vleague_matches)와 일정 ${vLeagueEventIds.length}건(club_events)을 삭제했습니다.`
+      );
+    } finally {
+      setVLeagueDeletingMatchesAll(false);
+    }
+  };
+
   const handleSaveVLeagueMatchResult = async (matchRow) => {
     setMainMsg("");
     if (!isVLeagueAdmin) {
@@ -1646,13 +2059,13 @@ function App() {
     return (data || []).length > 0;
   };
 
-  const findNextAvailableDateAfter = async (clubId, startYmd) => {
-    let cur = nextPlayableYmd(startYmd);
+  const findNextAvailableDateAfter = async (clubId, startYmd, leagueKey) => {
+    let cur = nextPlayableYmd(startYmd, leagueKey);
     for (let i = 0; i < 366; i += 1) {
       if (!cur) return null;
       const blocked = await isDateBlockedByEvents(clubId, cur);
       if (!blocked) return cur;
-      cur = nextPlayableYmd(addDaysYmd(cur, 1));
+      cur = nextPlayableYmd(addDaysYmd(cur, 1), leagueKey);
     }
     return cur;
   };
@@ -1680,7 +2093,7 @@ function App() {
     const sameLeague = vLeagueMatches.filter((m) => m.league === matchRow.league);
     const maxDate = getMaxMatchDateYmd(sameLeague) || matchRow.match_date || toYmd(new Date());
     const start = addDaysYmd(maxDate, 1);
-    const nextDate = await findNextAvailableDateAfter(club.id, start);
+    const nextDate = await findNextAvailableDateAfter(club.id, start, matchRow.league);
     if (!nextDate) {
       setMainMsg("다음 가능한 날짜를 찾지 못했습니다.");
       return;
@@ -1718,6 +2131,196 @@ function App() {
     setMainMsg(`해당 경기를 ${nextDate}로 연기해 맨 뒤로 보냈습니다.`);
     await loadVLeagueMatches(club.id);
     await loadEventsForMonth(club.id, calendarMonth);
+  };
+
+  const handlePostponeDateMatchesToEnd = async () => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("대진표 생성/수정은 관리자만 가능합니다.");
+      return;
+    }
+    if (!page.clubName) return;
+    const club = getClubByName(page.clubName);
+    if (!club) return;
+    const targetYmd = String(vLeagueBulkPostponeDate || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetYmd)) {
+      setMainMsg("연기할 날짜를 선택해 주세요.");
+      return;
+    }
+    const targets = (vLeagueMatches || [])
+      .filter(
+        (m) =>
+          m.league === vLeagueGradeTab &&
+          String(m.match_date || "") === targetYmd &&
+          Boolean(m.id)
+      )
+      .sort((a, b) => {
+        if ((a.round_no || 0) !== (b.round_no || 0)) {
+          return (a.round_no || 0) - (b.round_no || 0);
+        }
+        return (a.match_no || 0) - (b.match_no || 0);
+      });
+
+    if (targets.length === 0) {
+      setMainMsg("선택한 날짜에 연기할 저장된 경기가 없습니다.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `${targetYmd} 경기 ${targets.length}건을 일정의 맨 뒤로 보낼까요?\n\n- 토/일, 제외 날짜, 기존 일정이 있는 날짜는 피해서 배정됩니다.\n- 해당 경기 일정(club_events)도 함께 이동됩니다.`
+    );
+    if (!ok) return;
+
+    const sameLeague = (vLeagueMatches || []).filter((m) => m.league === vLeagueGradeTab);
+    const maxDate = getMaxMatchDateYmd(sameLeague) || targetYmd;
+    let cursor = addDaysYmd(maxDate, 1);
+
+    setVLeagueBulkPostponing(true);
+    try {
+      const moved = [];
+      for (const row of targets) {
+        const nextDate = await findNextAvailableDateAfter(club.id, cursor, row.league);
+        if (!nextDate) {
+          setMainMsg("다음 가능한 날짜를 찾지 못했습니다.");
+          return;
+        }
+        const { error: upErr } = await supabase
+          .from("vleague_matches")
+          .update({ match_date: nextDate })
+          .eq("id", row.id)
+          .eq("club_id", club.id);
+        if (upErr) {
+          setMainMsg(`대진표 날짜 변경 실패: ${upErr.message}`);
+          return;
+        }
+        moved.push({ ...row, match_date: nextDate });
+        cursor = addDaysYmd(nextDate, 1);
+      }
+
+      const tokens = moved
+        .map((m) => formatVLeagueMatchToken(m.id).trim())
+        .filter(Boolean);
+      for (const token of tokens) {
+        await supabase
+          .from("club_events")
+          .delete()
+          .eq("club_id", club.id)
+          .ilike("content", `%${token}%`);
+      }
+      const payload = moved
+        .filter((m) => Boolean(m.match_date))
+        .map((m) => ({
+          club_id: club.id,
+          event_date: m.match_date,
+          content: formatVLeagueEventContent(m),
+          created_by: currentUser?.name || null,
+        }));
+      if (payload.length > 0) {
+        const { error: insErr } = await supabase.from("club_events").insert(payload);
+        if (insErr) {
+          setMainMsg(`일정 이동 반영 실패: ${insErr.message}`);
+          return;
+        }
+      }
+
+      await loadVLeagueMatches(club.id);
+      await loadEventsForMonth(club.id, calendarMonth);
+      setMainMsg(
+        `${targetYmd} 경기 ${targets.length}건을 맨 뒤로 연기했습니다.`
+      );
+    } finally {
+      setVLeagueBulkPostponing(false);
+    }
+  };
+
+  const handleValidateVLeagueSchedule = async () => {
+    setMainMsg("");
+    if (!isVLeagueAdmin) {
+      setMainMsg("대진표 검증은 관리자(홍준영)만 가능합니다.");
+      return;
+    }
+    if (!page.clubName) return;
+    const club = getClubByName(page.clubName);
+    if (!club) return;
+
+    setVLeagueValidating(true);
+    try {
+      const savedMatches = (vLeagueMatches || []).filter((m) => Boolean(m.id));
+      if (savedMatches.length === 0) {
+        setMainMsg("검증할 저장된 대진표가 없습니다.");
+        return;
+      }
+
+      const pairKeyFromIds = (a, b) => {
+        const x = String(a || "");
+        const y = String(b || "");
+        return x < y ? `${x}__${y}` : `${y}__${x}`;
+      };
+      const classNameById = new Map((vLeagueClasses || []).map((c) => [c.id, c.class_name]));
+
+      const pairToMatchRows = new Map();
+      for (const m of savedMatches) {
+        const key = pairKeyFromIds(m.home_class_id, m.away_class_id);
+        if (!pairToMatchRows.has(key)) pairToMatchRows.set(key, []);
+        pairToMatchRows.get(key).push(m);
+      }
+      const duplicatedPairMatches = Array.from(pairToMatchRows.values()).filter(
+        (rows) => rows.length > 1
+      );
+
+      const { data: allEvents, error: evErr } = await supabase
+        .from("club_events")
+        .select("id, content")
+        .eq("club_id", club.id);
+      if (evErr) {
+        setMainMsg(`일정 조회 실패: ${evErr.message}`);
+        return;
+      }
+      const vLeagueEvents = (allEvents || []).filter((ev) => {
+        const c = String(ev.content || "");
+        return c.startsWith("[맑은샘]") || c.startsWith("[고운샘]");
+      });
+
+      // 같은 match token(⟦vm:...⟧)이 2번 이상 등장하면 일정 중복
+      const tokenToEvents = new Map();
+      for (const ev of vLeagueEvents) {
+        const m = String(ev.content || "").match(/⟦vm:([^\]]+)⟧/);
+        if (!m) continue;
+        const token = m[1];
+        if (!tokenToEvents.has(token)) tokenToEvents.set(token, []);
+        tokenToEvents.get(token).push(ev);
+      }
+      const duplicatedEventTokens = Array.from(tokenToEvents.entries()).filter(
+        ([, rows]) => rows.length > 1
+      );
+
+      const duplicatedPairLabels = duplicatedPairMatches.map((rows) => {
+        const one = rows[0];
+        const a = classNameById.get(one.home_class_id) || "학급";
+        const b = classNameById.get(one.away_class_id) || "학급";
+        return `${shortClassLabel(a)} vs ${shortClassLabel(b)} (${rows.length}회)`;
+      });
+
+      if (duplicatedPairLabels.length === 0 && duplicatedEventTokens.length === 0) {
+        setMainMsg("검증 완료: 같은 학급끼리의 중복 경기가 없습니다.");
+        return;
+      }
+
+      const parts = [];
+      if (duplicatedPairLabels.length > 0) {
+        parts.push(
+          `대진표 중복 ${duplicatedPairLabels.length}건: ${duplicatedPairLabels
+            .slice(0, 4)
+            .join(", ")}${duplicatedPairLabels.length > 4 ? " ..." : ""}`
+        );
+      }
+      if (duplicatedEventTokens.length > 0) {
+        parts.push(`일정 중복 ${duplicatedEventTokens.length}건(같은 경기 토큰 중복)`);
+      }
+      setMainMsg(`검증 결과: ${parts.join(" / ")}`);
+    } finally {
+      setVLeagueValidating(false);
+    }
   };
 
   const canEditVLeagueClassNickname = (row) => {
@@ -2379,6 +2982,12 @@ function App() {
                                   <span className="sport-vleague-board-head-item-text">
                                     {vLeagueTodayMatches.malgeun || "[맑은샘] 없음"}
                                   </span>
+                                  {vLeagueTodayMatchIds.malgeun ? (
+                                    <span className="sport-vleague-board-head-item-ref">
+                                      {getRefereeSummaryByMatchId(vLeagueTodayMatchIds.malgeun) ||
+                                        "주심/부심 미배정"}
+                                    </span>
+                                  ) : null}
                                 </span>
                                 <span
                                   className={
@@ -2399,6 +3008,12 @@ function App() {
                                   <span className="sport-vleague-board-head-item-text">
                                     {vLeagueTodayMatches.goun || "[고운샘] 없음"}
                                   </span>
+                                  {vLeagueTodayMatchIds.goun ? (
+                                    <span className="sport-vleague-board-head-item-ref">
+                                      {getRefereeSummaryByMatchId(vLeagueTodayMatchIds.goun) ||
+                                        "주심/부심 미배정"}
+                                    </span>
+                                  ) : null}
                                 </span>
                               </div>
                             </div>
@@ -2723,6 +3338,16 @@ function App() {
                     >
                       순위표
                     </button>
+                    <button
+                      type="button"
+                      className={clubTab === "vReferee" ? "club-tab active" : "club-tab"}
+                      onClick={() => {
+                        setMainMsg("");
+                        setClubTab("vReferee");
+                      }}
+                    >
+                      심판 배정
+                    </button>
                   </>
                 ) : (
                   <>
@@ -2960,11 +3585,20 @@ function App() {
                             };
                             return rank(aContent) - rank(bContent);
                           });
-                          return orderedItems.map((it) => (
-                            <div key={it.id} className="activity-item">
-                              {formatEventContentForDisplay(it.content)}
-                            </div>
-                          ));
+                          return orderedItems.map((it) => {
+                            const content = String(it.content || "");
+                            const m = content.match(/⟦vm:([^\]]+)⟧/);
+                            const matchId = m?.[1] || null;
+                            const refSummary = matchId ? getRefereeSummaryByMatchId(matchId) : "";
+                            return (
+                              <div key={it.id} className="activity-item">
+                                {formatEventContentForDisplay(it.content)}
+                                {refSummary ? (
+                                  <div className="activity-item-referee">{refSummary}</div>
+                                ) : null}
+                              </div>
+                            );
+                          });
                         })()}
                       </div>
                       <div className="activity-hint">
@@ -3088,7 +3722,7 @@ function App() {
                             className="vleague-ghost"
                             onClick={() => setVLeagueExcludeOpen((v) => !v)}
                           >
-                            제외 날짜 선택 ({vLeagueExcludeDates.length})
+                            제외 날짜 선택 ({vLeagueGradeTab === "malgeun" ? "맑은샘" : "고운샘"} · {vLeagueCurrentExcludeDates.length})
                           </button>
                           {vLeagueExcludeOpen && (
                             <div className="vleague-exclude-popover">
@@ -3166,8 +3800,7 @@ function App() {
                                       );
                                     }
                                     const ymd = toYmd(cell);
-                                    const excluded =
-                                      vLeagueExcludedDateSet.has(ymd);
+                                    const excluded = vLeagueCurrentExcludedDateSet.has(ymd);
                                     const dow = cell.getDay();
                                     return (
                                       <button
@@ -3179,7 +3812,9 @@ function App() {
                                           (dow === 6 ? " saturday" : "") +
                                           (excluded ? " excluded" : "")
                                         }
-                                        onClick={() => toggleVLeagueExcludeDate(ymd)}
+                                        onClick={() =>
+                                          toggleVLeagueExcludeDate(vLeagueGradeTab, ymd)
+                                        }
                                       >
                                         <span className="vleague-exclude-daynum">
                                           {cell.getDate()}
@@ -3196,6 +3831,27 @@ function App() {
                             </div>
                           )}
                         </div>
+                      </div>
+
+                      <div className="vleague-matches-control-row">
+                        <label className="vleague-field vleague-field--wide">
+                          <span>특정 날짜 경기 맨 뒤로 연기</span>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <input
+                              type="date"
+                              value={vLeagueBulkPostponeDate}
+                              onChange={(e) => setVLeagueBulkPostponeDate(e.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className="vleague-ghost"
+                              disabled={vLeagueBulkPostponing}
+                              onClick={handlePostponeDateMatchesToEnd}
+                            >
+                              {vLeagueBulkPostponing ? "연기 중..." : "해당 날짜 전체 맨 뒤로"}
+                            </button>
+                          </div>
+                        </label>
                       </div>
 
                       <div className="vleague-matches-control-row">
@@ -3290,6 +3946,24 @@ function App() {
                           {vLeagueSyncingCalendar
                             ? "정리 중..."
                             : "일정 중복 정리/재생성"}
+                        </button>
+                        <button
+                          type="button"
+                          className="vleague-ghost"
+                          disabled={vLeagueDeletingMatchesAll}
+                          onClick={handleDeleteAllVLeagueMatchesFromSupabase}
+                        >
+                          {vLeagueDeletingMatchesAll
+                            ? "삭제 중..."
+                            : "대진표 전체 삭제(Supabase)"}
+                        </button>
+                        <button
+                          type="button"
+                          className="vleague-ghost"
+                          disabled={vLeagueValidating}
+                          onClick={handleValidateVLeagueSchedule}
+                        >
+                          {vLeagueValidating ? "검증 중..." : "대진표 검증"}
                         </button>
                       </div>
                       </div>
@@ -3858,6 +4532,193 @@ function App() {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {clubTab === "vReferee" && isVLeagueClub(page.clubName) && (
+                <div className="club-page-body">
+                  <div className="vleague-section-head">
+                    <div className="vleague-section-title">심판 배정</div>
+                    <p className="vleague-section-desc">
+                      학생 심판을 등록하고 경기별로 배정합니다. (본인 학급 경기는 배정 불가)
+                    </p>
+                  </div>
+
+                  {!isVLeagueAdmin ? (
+                    <div className="vleague-matches-viewer-note">
+                      심판 등록/배정은 관리자만 가능합니다.
+                    </div>
+                  ) : (
+                    <div className="vleague-matches-toolbar">
+                      <div className="vleague-grade-tabs">
+                        <button
+                          type="button"
+                          className={
+                            "vleague-grade-tab vleague-grade-tab--malgeun" +
+                            (vLeagueGradeTab === "malgeun" ? " active" : "")
+                          }
+                          onClick={() => setVLeagueGradeTab("malgeun")}
+                        >
+                          맑은샘 리그
+                          <span className="vleague-grade-tab-count">(5학년)</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            "vleague-grade-tab vleague-grade-tab--goun" +
+                            (vLeagueGradeTab === "goun" ? " active" : "")
+                          }
+                          onClick={() => setVLeagueGradeTab("goun")}
+                        >
+                          고운샘 리그
+                          <span className="vleague-grade-tab-count">(6학년)</span>
+                        </button>
+                      </div>
+
+                      <div className="vleague-matches-controls">
+                        <div className="vleague-matches-control-row">
+                          <label className="vleague-field">
+                            <span>심판 등록(학생 이름)</span>
+                            <input
+                              type="text"
+                              value={vLeagueRefereeNameDraft}
+                              onChange={(e) => setVLeagueRefereeNameDraft(e.target.value)}
+                              placeholder="예: 홍길동"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="vleague-ghost"
+                            disabled={vLeagueRefereeSaving}
+                            onClick={handleRegisterVLeagueReferee}
+                          >
+                            {vLeagueRefereeSaving ? "저장 중..." : "심판 등록"}
+                          </button>
+                        </div>
+
+                        <div className="vleague-matches-control-row">
+                          <label className="vleague-field">
+                            <span>심판 학번</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={6}
+                              value={vLeagueAssignStudentIdDraft}
+                              onChange={(e) =>
+                                setVLeagueAssignStudentIdDraft(
+                                  e.target.value.replace(/\D/g, "")
+                                )
+                              }
+                              placeholder="6자리 학번"
+                            />
+                          </label>
+                          <label className="vleague-field">
+                            <span>역할</span>
+                            <select
+                              value={vLeagueAssignRoleDraft}
+                              onChange={(e) => setVLeagueAssignRoleDraft(e.target.value)}
+                            >
+                              <option value="chief">주심</option>
+                              <option value="assistant1">부심1</option>
+                              <option value="assistant2">부심2</option>
+                            </select>
+                          </label>
+                          <label className="vleague-field vleague-field--wide">
+                            <span>배정 경기</span>
+                            <select
+                              value={vLeagueAssignMatchIdDraft}
+                              onChange={(e) => setVLeagueAssignMatchIdDraft(e.target.value)}
+                            >
+                              <option value="">경기 선택</option>
+                              {vLeagueCurrentLeagueMatches.map((m) => {
+                                const home = shortClassLabel(
+                                  vleagueClassNameById[m.home_class_id] || "학급"
+                                );
+                                const away = shortClassLabel(
+                                  vleagueClassNameById[m.away_class_id] || "학급"
+                                );
+                                return (
+                                  <option key={m.id} value={m.id}>
+                                    {`${m.match_date || "날짜미정"} · R${m.round_no} · ${home} vs ${away}`}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            className="vleague-ghost"
+                            disabled={vLeagueRefereeSaving}
+                            onClick={handleAssignVLeagueReferee}
+                          >
+                            {vLeagueRefereeSaving ? "배정 중..." : "경기 배정"}
+                          </button>
+                          <button
+                            type="button"
+                            className="vleague-ghost"
+                            disabled={vLeagueRefereeSaving}
+                            onClick={handleDeleteAllVLeagueRefereeAssignments}
+                          >
+                            {vLeagueRefereeSaving ? "삭제 중..." : "배정 전체 삭제"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {vLeagueRefereeLoading ? (
+                    <div className="cal-loading">심판 데이터 불러오는 중...</div>
+                  ) : (
+                    <>
+                      <div className="vleague-section-head" style={{ marginTop: 12 }}>
+                        <div className="vleague-section-title">등록 심판</div>
+                      </div>
+                      <div className="vleague-cheer-list">
+                        {vLeagueReferees.length === 0 ? (
+                          <div className="activity-empty">등록된 심판이 없습니다.</div>
+                        ) : (
+                          vLeagueReferees.map((r) => (
+                            <div key={r.id} className="vleague-cheer-item">
+                              <div className="vleague-cheer-msg">{r.student_name}</div>
+                              <div className="vleague-cheer-meta">
+                                등록일 · {formatDateTimeCompact(r.created_at)}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="vleague-section-head" style={{ marginTop: 12 }}>
+                        <div className="vleague-section-title">경기 심판 배정</div>
+                      </div>
+                      <div className="vleague-cheer-list">
+                        {vLeagueRefereeAssignments.length === 0 ? (
+                          <div className="activity-empty">등록된 심판 배정이 없습니다.</div>
+                        ) : (
+                          vLeagueRefereeAssignments.map((a) => {
+                            const m = vLeagueMatchById.get(a.match_id);
+                            const home = shortClassLabel(
+                              vleagueClassNameById[m?.home_class_id] || "학급"
+                            );
+                            const away = shortClassLabel(
+                              vleagueClassNameById[m?.away_class_id] || "학급"
+                            );
+                            const matchText = m
+                              ? `${m.match_date || "날짜미정"} · R${m.round_no} · ${home} vs ${away}`
+                              : "삭제된 경기";
+                            return (
+                              <div key={a.id} className="vleague-cheer-item">
+                                <div className="vleague-cheer-msg">
+                                  [{getRefereeRoleLabel(a.assignment_role)}] {a.student_name} ({a.student_id})
+                                </div>
+                                <div className="vleague-cheer-meta">{matchText}</div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

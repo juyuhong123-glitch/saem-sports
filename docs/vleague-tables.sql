@@ -52,6 +52,30 @@ create table if not exists public.vleague_standings (
   points int not null default 0
 );
 
+-- === 심판 배정 ===
+create table if not exists public.vleague_referees (
+  id uuid primary key default gen_random_uuid(),
+  club_id uuid not null references public.clubs (id) on delete cascade,
+  student_name text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.vleague_referee_assignments (
+  id uuid primary key default gen_random_uuid(),
+  club_id uuid not null references public.clubs (id) on delete cascade,
+  match_id uuid not null references public.vleague_matches (id) on delete cascade,
+  student_id text not null,
+  student_name text not null,
+  assignment_role text not null check (assignment_role in ('chief', 'assistant1', 'assistant2')),
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists vleague_referee_assignments_match_role_unique
+on public.vleague_referee_assignments (match_id, assignment_role);
+
+-- 과거 인덱스(경기당 1명 제한)를 썼다면 제거하세요.
+-- drop index if exists public.vleague_referee_assignments_match_unique;
+
 -- 테스트 시 RLS를 끄거나, anon용 SELECT/정책을 추가하세요.
 
 -- === 참가 학급이 앱에 안 보일 때 (데이터는 있는데 0건) ===
