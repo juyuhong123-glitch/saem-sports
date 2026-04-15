@@ -70,9 +70,13 @@ on public.vleague_referees (club_id, student_id);
 create table if not exists public.vleague_rule_settings (
   club_id uuid primary key references public.clubs (id) on delete cascade,
   rule_text text not null default '',
+  auto_logout_minutes int not null default 1,
   updated_by text null,
   updated_at timestamptz not null default now()
 );
+
+alter table public.vleague_rule_settings
+  add column if not exists auto_logout_minutes int not null default 1;
 
 create table if not exists public.vleague_referee_assignments (
   id uuid primary key default gen_random_uuid(),
