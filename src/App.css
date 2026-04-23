@@ -2170,6 +2170,35 @@ body {
   font-size: 14.5px;
 }
 
+.schedule-layout .activity-item {
+  text-align: left;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.schedule-layout .activity-item-referee {
+  text-align: left;
+}
+
+@media (max-width: 600px) {
+  .schedule-layout .activity-item {
+    font-size: clamp(10px, 2.9vw, 12.5px);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: keep-all;
+    letter-spacing: -0.1px;
+  }
+
+  .schedule-layout .activity-item-referee {
+    font-size: clamp(10px, 2.7vw, 11.5px);
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: keep-all;
+    margin-top: 3px;
+  }
+}
+
 .activity-item-referee {
   margin-top: 4px;
   font-size: 12px;

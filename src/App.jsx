@@ -595,7 +595,7 @@ function App() {
     const homeName = vLeagueScheduleTeamLabelById[m.home_class_id] || "학급";
     const awayName = vLeagueScheduleTeamLabelById[m.away_class_id] || "학급";
     const leagueLabel = m.league === "malgeun" ? "맑은샘" : "고운샘";
-    return `[${leagueLabel}] R${m.round_no} · ${homeName} vs ${awayName}${formatVLeagueMatchToken(
+    return `[${leagueLabel}] ${homeName} vs ${awayName}${formatVLeagueMatchToken(
       m.id
     )}`;
   };
@@ -4846,7 +4846,7 @@ function App() {
                         })()}
                       </div>
                       <div className="activity-hint">
-                        달력에서 날짜를 누르면 해당 날짜의 경기 일정이 표시됩니다.
+                        날짜를 누르면 해당 날짜의 경기 일정이 표시됩니다.
                       </div>
                     </div>
                   </div>
