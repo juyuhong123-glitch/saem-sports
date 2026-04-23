@@ -228,6 +228,53 @@ body {
   box-shadow: 0 0 0 1px rgba(30, 136, 229, 0.15);
 }
 
+.form-input-with-toggle {
+  position: relative;
+}
+
+.form-input-with-toggle .form-input {
+  width: 100%;
+  padding-right: 40px;
+}
+
+.form-toggle-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.form-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.form-toggle-btn:hover {
+  color: #334155;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.form-toggle-btn:focus-visible {
+  outline: 2px solid rgba(30, 136, 229, 0.4);
+  outline-offset: 1px;
+}
+
+.form-toggle-btn:active {
+  transform: translateY(-50%) scale(0.96);
+}
+
 .primary-btn {
   margin-top: 8px;
   padding: 9px 0;

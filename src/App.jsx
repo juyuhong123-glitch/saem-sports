@@ -318,9 +318,11 @@ function App() {
   // 로그인/회원가입 입력 상태
   const [studentLoginId, setStudentLoginId] = useState("");
   const [studentLoginPw, setStudentLoginPw] = useState("");
+  const [showStudentLoginPw, setShowStudentLoginPw] = useState(false);
 
   const [teacherCodeLogin, setTeacherCodeLogin] = useState("");
   const [teacherLoginName, setTeacherLoginName] = useState("");
+  const [showTeacherCodeLogin, setShowTeacherCodeLogin] = useState(false);
 
   const [studentSignupId, setStudentSignupId] = useState("");
   const [studentSignupName, setStudentSignupName] = useState("");
@@ -6522,12 +6524,31 @@ function App() {
                   </label>
                   <label className="form-label">
                     비밀번호
-                    <input
-                      type="password"
-                      value={studentLoginPw}
-                      onChange={(e) => setStudentLoginPw(e.target.value)}
-                      className="form-input"
-                    />
+                    <div className="form-input-with-toggle">
+                      <input
+                        type={showStudentLoginPw ? "text" : "password"}
+                        value={studentLoginPw}
+                        onChange={(e) => setStudentLoginPw(e.target.value)}
+                        className="form-input"
+                      />
+                      <button
+                        type="button"
+                        className="form-toggle-btn"
+                        onClick={() => setShowStudentLoginPw((prev) => !prev)}
+                        aria-label={showStudentLoginPw ? "비밀번호 숨기기" : "비밀번호 보기"}
+                        title={showStudentLoginPw ? "비밀번호 숨기기" : "비밀번호 보기"}
+                      >
+                        {showStudentLoginPw ? (
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 5c-5.5 0-9.7 4.3-10.9 6 .9 1.4 3.4 4.6 7.1 5.7l-1.9 1.9 1.4 1.4 13-13-1.4-1.4-2.1 2.1c-1.6-.8-3.4-1.2-5.2-1.2zm0 2c1.2 0 2.3.2 3.3.7l-1.7 1.7a4 4 0 0 0-4.9 4.9l-1 1c-2.2-.9-3.9-2.6-4.9-4 1.3-1.7 4.7-4.3 9.2-4.3zm9.8 2.6-2.3 2.3a10.9 10.9 0 0 1-3.2 2.9 9.2 9.2 0 0 1-4.3 1.2l1.7-1.7a4 4 0 0 0 4.5-4.5l1.8-1.8c.6.5 1.2 1 1.8 1.6z" />
+                          </svg>
+                        ) : (
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 5c-5.5 0-9.7 4.3-10.9 6 1.2 1.8 5.4 7 10.9 7s9.7-5.2 10.9-7C21.7 9.3 17.5 5 12 5zm0 11c-3.5 0-6.4-3.1-7.8-5 1.4-1.9 4.3-5 7.8-5s6.4 3.1 7.8 5c-1.4 1.9-4.3 5-7.8 5zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
                   </label>
                   <button type="submit" className="primary-btn">
                     학생 로그인
@@ -6546,12 +6567,31 @@ function App() {
                   </label>
                   <label className="form-label">
                     가입 코드
-                    <input
-                      type="password"
-                      value={teacherCodeLogin}
-                      onChange={(e) => setTeacherCodeLogin(e.target.value)}
-                      className="form-input"
-                    />
+                    <div className="form-input-with-toggle">
+                      <input
+                        type={showTeacherCodeLogin ? "text" : "password"}
+                        value={teacherCodeLogin}
+                        onChange={(e) => setTeacherCodeLogin(e.target.value)}
+                        className="form-input"
+                      />
+                      <button
+                        type="button"
+                        className="form-toggle-btn"
+                        onClick={() => setShowTeacherCodeLogin((prev) => !prev)}
+                        aria-label={showTeacherCodeLogin ? "가입 코드 숨기기" : "가입 코드 보기"}
+                        title={showTeacherCodeLogin ? "가입 코드 숨기기" : "가입 코드 보기"}
+                      >
+                        {showTeacherCodeLogin ? (
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 5c-5.5 0-9.7 4.3-10.9 6 .9 1.4 3.4 4.6 7.1 5.7l-1.9 1.9 1.4 1.4 13-13-1.4-1.4-2.1 2.1c-1.6-.8-3.4-1.2-5.2-1.2zm0 2c1.2 0 2.3.2 3.3.7l-1.7 1.7a4 4 0 0 0-4.9 4.9l-1 1c-2.2-.9-3.9-2.6-4.9-4 1.3-1.7 4.7-4.3 9.2-4.3zm9.8 2.6-2.3 2.3a10.9 10.9 0 0 1-3.2 2.9 9.2 9.2 0 0 1-4.3 1.2l1.7-1.7a4 4 0 0 0 4.5-4.5l1.8-1.8c.6.5 1.2 1 1.8 1.6z" />
+                          </svg>
+                        ) : (
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 5c-5.5 0-9.7 4.3-10.9 6 1.2 1.8 5.4 7 10.9 7s9.7-5.2 10.9-7C21.7 9.3 17.5 5 12 5zm0 11c-3.5 0-6.4-3.1-7.8-5 1.4-1.9 4.3-5 7.8-5s6.4 3.1 7.8 5c-1.4 1.9-4.3 5-7.8 5zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
                   </label>
                   <button type="submit" className="primary-btn">
                     교사 로그인
