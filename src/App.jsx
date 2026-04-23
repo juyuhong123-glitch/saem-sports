@@ -1403,9 +1403,10 @@ function App() {
       const teamMap = new Map();
       for (const cls of classes) {
         const nickname = String(cls.nickname || "").trim();
+        const classLabel = shortClassLabel(cls.class_name || "학급");
         const displayName = nickname
-          ? `${nickname}(${cls.class_name})`
-          : cls.class_name;
+          ? `${nickname}(${classLabel})`
+          : classLabel;
         teamMap.set(cls.id, {
           class_id: cls.id,
           team_name: displayName,
