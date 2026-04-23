@@ -3,4 +3,4 @@
  * 재배포할 때마다 배포일 기준으로 수정하세요.
  * 형식: 월.일.당일 배포 차수 (예: 4월 3일 첫 배포 → 4.3.1, 같은 날 다시 배포 → 4.3.2)
  */
-export const APP_RELEASE_VERSION = "4.3.1";
+export const APP_RELEASE_VERSION = "4.23.1";

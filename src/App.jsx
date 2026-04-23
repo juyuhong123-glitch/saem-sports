@@ -573,20 +573,33 @@ function App() {
   const monthStart = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
   const monthEnd = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 
-  const loadEventsForMonth = async (clubId, monthDate) => {
+  const loadEventsForMonth = async (clubIdsOrId, monthDate) => {
     setEventLoading(true);
     const start = monthStart(monthDate);
     const end = monthEnd(monthDate);
     const startYmd = toYmd(start);
     const endYmd = toYmd(end);
+    const clubIds = Array.isArray(clubIdsOrId)
+      ? clubIdsOrId.filter(Boolean)
+      : [clubIdsOrId].filter(Boolean);
+    if (clubIds.length === 0) {
+      setEventsByDate({});
+      setEventLoading(false);
+      return;
+    }
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("club_events")
       .select("id, event_date, content")
-      .eq("club_id", clubId)
       .gte("event_date", startYmd)
       .lte("event_date", endYmd)
       .order("event_date", { ascending: true });
+    if (clubIds.length === 1) {
+      query = query.eq("club_id", clubIds[0]);
+    } else {
+      query = query.in("club_id", clubIds);
+    }
+    const { data, error } = await query;
 
     if (error) {
       setMainMsg(`일정 로딩 실패: ${error.message}`);
@@ -606,6 +619,14 @@ function App() {
   };
 
   const ensureClubEventsLoaded = async (clubName, monthDate) => {
+    if (isVLeagueClub(clubName)) {
+      const clubIds = getClubsByName(V_LEAGUE_LABEL)
+        .map((c) => c?.id)
+        .filter(Boolean);
+      if (clubIds.length === 0) return;
+      await loadEventsForMonth(clubIds, monthDate);
+      return;
+    }
     const club = getClubByName(clubName);
     if (!club) return;
     await loadEventsForMonth(club.id, monthDate);
@@ -1000,14 +1021,27 @@ function App() {
   };
 
   /** select('*'): DB에 wins/losses/rank_order 컬럼이 없어도 조회가 실패하지 않게 함 */
-  const loadVLeagueClasses = useCallback(async (clubId) => {
+  const loadVLeagueClasses = useCallback(async (clubIdsOrId) => {
     setVLeagueLoading(true);
     setVLeagueClassesError(null);
-    const { data, error } = await supabase
+    const clubIds = Array.isArray(clubIdsOrId)
+      ? clubIdsOrId.filter(Boolean)
+      : [clubIdsOrId].filter(Boolean);
+    if (clubIds.length === 0) {
+      setVLeagueLoading(false);
+      setVLeagueClasses([]);
+      return;
+    }
+    let query = supabase
       .from("vleague_classes")
       .select("*")
-      .eq("club_id", clubId)
       .order("sort_order", { ascending: true });
+    if (clubIds.length === 1) {
+      query = query.eq("club_id", clubIds[0]);
+    } else {
+      query = query.in("club_id", clubIds);
+    }
+    const { data, error } = await query;
     setVLeagueLoading(false);
     if (error) {
       const msg = error.message;
@@ -1020,13 +1054,26 @@ function App() {
     setVLeagueClasses(data || []);
   }, []);
 
-  const loadVLeagueStandings = async (clubId) => {
+  const loadVLeagueStandings = async (clubIdsOrId) => {
     setVLeagueLoading(true);
-    const { data, error } = await supabase
+    const clubIds = Array.isArray(clubIdsOrId)
+      ? clubIdsOrId.filter(Boolean)
+      : [clubIdsOrId].filter(Boolean);
+    if (clubIds.length === 0) {
+      setVLeagueLoading(false);
+      setVLeagueStandings([]);
+      return;
+    }
+    let query = supabase
       .from("vleague_standings")
       .select("id, rank_order, team_name, wins, losses, points")
-      .eq("club_id", clubId)
       .order("rank_order", { ascending: true });
+    if (clubIds.length === 1) {
+      query = query.eq("club_id", clubIds[0]);
+    } else {
+      query = query.in("club_id", clubIds);
+    }
+    const { data, error } = await query;
     setVLeagueLoading(false);
     if (error) {
       setMainMsg(`순위표 로딩 실패: ${error.message}`);
@@ -1036,16 +1083,28 @@ function App() {
     setVLeagueStandings(data || []);
   };
 
-  const loadVLeagueMatches = useCallback(async (clubId) => {
+  const loadVLeagueMatches = useCallback(async (clubIdsOrId) => {
     setVLeagueMatchesLoading(true);
     setVLeagueMatchesError(null);
+    const clubIds = Array.isArray(clubIdsOrId)
+      ? clubIdsOrId.filter(Boolean)
+      : [clubIdsOrId].filter(Boolean);
+    if (clubIds.length === 0) {
+      setVLeagueMatchesLoading(false);
+      setVLeagueMatches([]);
+      return;
+    }
     let query = supabase
       .from("vleague_matches")
       .select("*")
-      .eq("club_id", clubId)
       .order("league", { ascending: true })
       .order("round_no", { ascending: true })
       .order("match_no", { ascending: true });
+    if (clubIds.length === 1) {
+      query = query.eq("club_id", clubIds[0]);
+    } else {
+      query = query.in("club_id", clubIds);
+    }
     if (!isVLeagueAdmin) {
       query = query.eq("created_by", vLeagueAdminNameNorm);
     }
@@ -1081,6 +1140,18 @@ function App() {
     return clubs.filter((club) => normalizeClubName(club.name) === n);
   };
 
+  const getVLeagueClubIds = useCallback(
+    () =>
+      Array.from(
+        new Set(
+          getClubsByName(V_LEAGUE_LABEL)
+            .map((c) => c?.id)
+            .filter(Boolean)
+        )
+      ),
+    [clubs]
+  );
+
   const myStudentClassName = useMemo(
     () => formatClassNameFromStudentId(currentUser?.id),
     [currentUser?.id]
@@ -1112,19 +1183,19 @@ function App() {
   useEffect(() => {
     if (page.type !== "clubMain" || clubTab !== "vClasses") return;
     if (!isVLeagueClub(page.clubName)) return;
-    const club = getClubByName(page.clubName);
-    if (!club) return;
-    loadVLeagueClasses(club.id);
+    const vClubIds = getVLeagueClubIds();
+    if (vClubIds.length === 0) return;
+    loadVLeagueClasses(vClubIds);
   }, [page.type, page.clubName, clubTab, clubs, loadVLeagueClasses]);
 
   /** 대진표 탭: 기존 대진표 로드 */
   useEffect(() => {
     if (page.type !== "clubMain" || clubTab !== "vMatches") return;
     if (!isVLeagueClub(page.clubName)) return;
-    const club = getClubByName(page.clubName);
-    if (!club) return;
-    loadVLeagueClasses(club.id);
-    loadVLeagueMatches(club.id);
+    const vClubIds = getVLeagueClubIds();
+    if (vClubIds.length === 0) return;
+    loadVLeagueClasses(vClubIds);
+    loadVLeagueMatches(vClubIds);
   }, [
     page.type,
     page.clubName,
@@ -1137,10 +1208,10 @@ function App() {
   useEffect(() => {
     if (page.type !== "clubMain") return;
     if (!isVLeagueClub(page.clubName)) return;
-    const club = getClubByName(page.clubName);
-    if (!club) return;
-    loadVLeagueClasses(club.id);
-    loadVLeagueMatches(club.id);
+    const vClubIds = getVLeagueClubIds();
+    if (vClubIds.length === 0) return;
+    loadVLeagueClasses(vClubIds);
+    loadVLeagueMatches(vClubIds);
   }, [page.type, page.clubName, clubs, loadVLeagueClasses, loadVLeagueMatches]);
 
   const vleagueClassNameById = useMemo(() => {
@@ -2292,7 +2363,7 @@ function App() {
       return;
     }
     const ok = window.confirm(
-      `${vLeagueGradeTab === "malgeun" ? "맑은샘" : "고운샘"} 리그 ${targetMatches.length}경기에 심판 3명을 일괄 랜덤 배정할까요?\n\n- 기존 배정(해당 리그 경기에 걸린 배정)은 덮어씁니다.\n- 같은 날짜 중복 배정은 허용되지 않습니다.\n- 본인 학급 경기는 배정되지 않습니다.`
+      `${vLeagueGradeTab === "malgeun" ? "맑은샘" : "고운샘"} 리그 ${targetMatches.length}경기에 심판 2명을 일괄 랜덤 배정할까요?\n\n- 기존 배정(해당 리그 경기에 걸린 배정)은 덮어씁니다.\n- 같은 날짜 중복 배정은 허용되지 않습니다.\n- 본인 학급 경기는 배정되지 않습니다.`
     );
     if (!ok) return;
 
@@ -2330,7 +2401,7 @@ function App() {
         return out;
       };
 
-      const roleOrder = ["chief", "assistant1", "assistant2"];
+      const roleOrder = ["chief", "assistant1"];
       const payload = [];
       const orderedMatches = [...targetMatches].sort((a, b) => {
         const ad = String(a.match_date || "");
@@ -2356,13 +2427,13 @@ function App() {
           if (ymd && used.has(sid)) return false;
           return true;
         });
-        if (eligible.length < 3) {
+        if (eligible.length < 2) {
           setMainMsg(
-            `${ymd || "날짜미정"} 경기 배정 실패: 조건을 만족하는 심판 후보가 3명보다 적습니다.`
+            `${ymd || "날짜미정"} 경기 배정 실패: 조건을 만족하는 심판 후보가 2명보다 적습니다.`
           );
           return;
         }
-        const picked = shuffle(eligible).slice(0, 3);
+        const picked = shuffle(eligible).slice(0, 2);
         picked.forEach((p, idx) => {
           payload.push({
             club_id: club.id,
@@ -3575,9 +3646,17 @@ function App() {
       ]);
 
       if (insertError) {
-        console.error(insertError);
-        setErrorMsg(`교사 정보 저장 중 오류: ${insertError.message}`);
-        return;
+        const msg = String(insertError.message || "");
+        const isRlsInsertBlocked =
+          /row-level security/i.test(msg) || /permission denied/i.test(msg);
+        if (!isRlsInsertBlocked) {
+          console.error(insertError);
+          setErrorMsg(`교사 정보 저장 중 오류: ${insertError.message}`);
+          return;
+        }
+        // teachers 신규 insert만 RLS로 막힌 경우에도 로그인은 허용한다.
+        // (현재 앱은 이름+코드 기반 인증을 사용하며 teachers insert는 보조 저장 용도)
+        console.warn("teachers insert blocked by RLS, continue login:", insertError);
       }
     }
 
@@ -3605,7 +3684,14 @@ function App() {
           <div className="app-title">새샘 스포츠클럽</div>
           <div className="header-right">
             <span className="user-info">
-              {currentUser.role === "teacher" ? "교사" : "학생"}{" "}
+              {currentUser.role === "teacher"
+                ? normalizeTeacherName(currentUser.name) === normalizeTeacherName("조혜란")
+                  ? "교장"
+                  : normalizeTeacherName(currentUser.name) ===
+                      normalizeTeacherName("권희정")
+                    ? "교감"
+                    : "교사"
+                : "학생"}{" "}
               {currentUser.name}
               {currentUser.id ? ` (${currentUser.id})` : ""}
             </span>
@@ -5591,7 +5677,7 @@ function App() {
                           >
                             {vLeagueRefereeSaving
                               ? "배정 중..."
-                              : "전체 경기 랜덤 배정(심판 3명)"}
+                              : "전체 경기 랜덤 배정(심판 2명)"}
                           </button>
                           <button
                             type="button"
