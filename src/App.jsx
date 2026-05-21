@@ -179,22 +179,6 @@ function isVLeagueCheerVisibleNow(cheer, matches, now = new Date()) {
 
 const VLEAGUE_POSTPONE_UNDO_STORAGE_KEY = "vleague_postpone_undo_v1";
 
-const HEALTH_WALK_PLOGGING_MARKER = "줍깅(플로깅)";
-
-function buildHealthWalkPloggingContent(className) {
-  const cls = String(className || "").replace(/\s+/g, " ").trim();
-  return `[${cls}] ${HEALTH_WALK_PLOGGING_MARKER} 실시`;
-}
-
-function parseHealthWalkClassFromEventContent(content) {
-  const m = String(content || "").match(/^\[([^\]]+)\]/);
-  return m?.[1]?.replace(/\s+/g, " ").trim() || null;
-}
-
-function isHealthWalkPloggingEventContent(content) {
-  return String(content || "").includes(HEALTH_WALK_PLOGGING_MARKER);
-}
-
 /** 2026년 대한민국 공휴일(대체공휴일 포함) */
 const KOREA_HOLIDAYS_2026 = new Set([
   "2026-01-01", // 신정
@@ -326,8 +310,6 @@ function App() {
   const [membersLoading, setMembersLoading] = useState(false);
   const [vLeagueClasses, setVLeagueClasses] = useState([]);
   const [vLeagueClassesError, setVLeagueClassesError] = useState(null);
-  const [healthWalk365Classes, setHealthWalk365Classes] = useState([]);
-  const [healthWalk365ClassesError, setHealthWalk365ClassesError] = useState(null);
   const [vLeagueStandings, setVLeagueStandings] = useState([]);
   const [vLeagueLoading, setVLeagueLoading] = useState(false);
   const [vLeagueNickDrafts, setVLeagueNickDrafts] = useState({});
@@ -812,53 +794,6 @@ function App() {
     setEventLoading(false);
   };
 
-  const loadHealthWalkPloggingForMonth = useCallback(async (clubId, monthDate) => {
-    setEventLoading(true);
-    const start = monthStart(monthDate);
-    const end = monthEnd(monthDate);
-    const startYmd = toYmd(start);
-    const endYmd = toYmd(end);
-    if (!clubId) {
-      setEventsByDate({});
-      setEventLoading(false);
-      return;
-    }
-    const { data, error } = await supabase
-      .from("health_walk365_plogging_days")
-      .select(
-        "id, event_date, class_id, created_by, health_walk365_classes ( class_name )"
-      )
-      .eq("club_id", clubId)
-      .gte("event_date", startYmd)
-      .lte("event_date", endYmd)
-      .order("event_date", { ascending: true });
-    if (error) {
-      setMainMsg(`줍깅(플로깅) 일정 로딩 실패: ${error.message}`);
-      setEventsByDate({});
-      setEventLoading(false);
-      return;
-    }
-    const next = {};
-    for (const row of data || []) {
-      const ymd = String(row.event_date || "").slice(0, 10);
-      if (!ymd) continue;
-      const className =
-        row.health_walk365_classes?.class_name ||
-        healthWalk365Classes.find((c) => c.id === row.class_id)?.class_name ||
-        "학급";
-      if (!next[ymd]) next[ymd] = [];
-      next[ymd].push({
-        id: row.id,
-        content: buildHealthWalkPloggingContent(className),
-        class_id: row.class_id,
-        class_name: className,
-        _healthWalk: true,
-      });
-    }
-    setEventsByDate(next);
-    setEventLoading(false);
-  }, [healthWalk365Classes]);
-
   const ensureClubEventsLoaded = async (clubName, monthDate) => {
     if (isVLeagueClub(clubName)) {
       const clubIds = getClubsByName(V_LEAGUE_LABEL)
@@ -866,12 +801,6 @@ function App() {
         .filter(Boolean);
       if (clubIds.length === 0) return;
       await loadEventsForMonth(clubIds, monthDate);
-      return;
-    }
-    if (isHealthWalk365Club(clubName)) {
-      const club = await ensureHealthWalk365Club();
-      if (!club) return;
-      await loadHealthWalkPloggingForMonth(club.id, monthDate);
       return;
     }
     const club = getClubByName(clubName);
@@ -1241,45 +1170,17 @@ function App() {
   const handleDeleteEvent = async (eventId, ymd) => {
     setMainMsg("");
     if (!page.clubName) return;
-    const deleteItem = (eventsByDate[ymd] || []).find((e) => e.id === eventId);
-    if (isHealthWalk365Club(page.clubName)) {
-      if (!canDeleteHealthWalkPloggingEvent(deleteItem)) {
-        setMainMsg("본인 담임 학급의 줍깅(플로깅) 기록만 삭제할 수 있습니다.");
-        return;
-      }
-    } else if (!canCurrentTeacherEditSchedule(page.clubName)) {
+    if (!canCurrentTeacherEditSchedule(page.clubName)) {
       setMainMsg("해당 종목의 담당 교사만 일정을 삭제할 수 있습니다.");
       return;
     }
-    const club = isHealthWalk365Club(page.clubName)
-      ? await ensureHealthWalk365Club()
-      : getClubByName(page.clubName);
+    const club = getClubByName(page.clubName);
     if (!club) {
-      setMainMsg(
-        isHealthWalk365Club(page.clubName)
-          ? "건강걷기 365 클럽 정보를 찾을 수 없습니다. Supabase clubs 테이블에 종목을 등록해 주세요."
-          : "클럽 정보를 찾을 수 없습니다."
-      );
+      setMainMsg("클럽 정보를 찾을 수 없습니다.");
       return;
     }
     if (!eventId) return;
     if (!window.confirm("이 일정을 삭제할까요?")) return;
-
-    if (isHealthWalk365Club(page.clubName)) {
-      const { error } = await supabase
-        .from("health_walk365_plogging_days")
-        .delete()
-        .eq("id", eventId)
-        .eq("club_id", club.id);
-      if (error) {
-        setMainMsg(`줍깅(플로깅) 삭제 실패: ${error.message}`);
-        return;
-      }
-      setMainMsg("줍깅(플로깅) 실시 기록을 삭제했습니다.");
-      const baseDate = parseYmdLocal(ymd) || calendarMonth;
-      await loadHealthWalkPloggingForMonth(club.id, baseDate);
-      return;
-    }
 
     const { error } = await supabase
       .from("club_events")
@@ -1370,13 +1271,6 @@ function App() {
   const isSportStackingClub = (clubName) =>
     normalizeClubName(clubName) === normalizeClubName("스포츠 스태킹");
 
-  const HEALTH_WALK365_LABEL = "건강걷기 365";
-  const isHealthWalk365Club = (clubName) =>
-    normalizeClubName(clubName) === normalizeClubName(HEALTH_WALK365_LABEL);
-  const HEALTH_WALK365_PRIMARY_CLUB_ID = String(
-    import.meta.env.VITE_HEALTH_WALK365_PRIMARY_CLUB_ID || ""
-  ).trim();
-
   const V_LEAGUE_LABEL = "새샘 V리그";
   const STACKING_PHOTO_BUCKET =
     String(import.meta.env.VITE_STACKING_PHOTO_BUCKET || "").trim() || "stacking-records";
@@ -1436,30 +1330,6 @@ function App() {
     }
     setVLeagueClassesError(null);
     setVLeagueClasses(data || []);
-  }, []);
-
-  const loadHealthWalk365Classes = useCallback(async (clubId) => {
-    setHealthWalk365ClassesError(null);
-    if (!clubId) {
-      setHealthWalk365Classes([]);
-      return;
-    }
-    const { data, error } = await supabase
-      .from("health_walk365_classes")
-      .select(
-        "id, club_id, class_name, grade, class_no, homeroom_teacher_name, sort_order"
-      )
-      .eq("club_id", clubId)
-      .order("sort_order", { ascending: true })
-      .order("grade", { ascending: true })
-      .order("class_no", { ascending: true });
-    if (error) {
-      const msg = error.message;
-      setHealthWalk365ClassesError(msg);
-      setHealthWalk365Classes([]);
-      return;
-    }
-    setHealthWalk365Classes(data || []);
   }, []);
 
   const loadVLeagueStandings = async (clubIdsOrId) => {
@@ -1547,49 +1417,6 @@ function App() {
     const n = normalizeClubName(name);
     return clubs.filter((club) => normalizeClubName(club.name) === n);
   };
-
-  /** clubs.name 이 앱 표기와 다르거나 없을 때 건강걷기 365 일정용 club_id 해석 */
-  const resolveHealthWalk365ClubFromList = useCallback(
-    (list) => {
-      const rows = list || [];
-      const target = normalizeClubName(HEALTH_WALK365_LABEL);
-      const exact = rows.filter((c) => normalizeClubName(c.name) === target);
-      if (exact.length === 1) return exact[0];
-      if (exact.length > 1) {
-        if (HEALTH_WALK365_PRIMARY_CLUB_ID) {
-          const pref = exact.find((c) => c.id === HEALTH_WALK365_PRIMARY_CLUB_ID);
-          if (pref) return pref;
-        }
-        return [...exact].sort((a, b) => String(a.id).localeCompare(String(b.id)))[0];
-      }
-      if (HEALTH_WALK365_PRIMARY_CLUB_ID) {
-        const byId = rows.find((c) => c.id === HEALTH_WALK365_PRIMARY_CLUB_ID);
-        if (byId) return byId;
-      }
-      const fuzzy = rows.filter((c) => {
-        const n = normalizeClubName(c.name);
-        return n.includes("건강") && (n.includes("365") || n.includes("걷기"));
-      });
-      if (fuzzy.length > 0) {
-        return [...fuzzy].sort((a, b) => String(a.id).localeCompare(String(b.id)))[0];
-      }
-      return null;
-    },
-    [HEALTH_WALK365_PRIMARY_CLUB_ID]
-  );
-
-  const resolveHealthWalk365Club = useCallback(
-    () => resolveHealthWalk365ClubFromList(clubs),
-    [clubs, resolveHealthWalk365ClubFromList]
-  );
-
-  const ensureHealthWalk365Club = useCallback(async () => {
-    let club = resolveHealthWalk365Club();
-    if (club) return club;
-    const refreshed = await loadClubs();
-    club = resolveHealthWalk365ClubFromList(refreshed);
-    return club;
-  }, [resolveHealthWalk365Club, resolveHealthWalk365ClubFromList]);
 
   const getVLeagueClubIds = useCallback(
     () =>
@@ -1910,120 +1737,15 @@ function App() {
     return list[0];
   }, [currentUser?.role, currentUser?.name, vLeagueClasses]);
 
-  /** health_walk365_classes.homeroom_teacher_name 과 로그인 교사 이름 일치 (1~6학년) */
-  const myTeacherHealthWalkHomeroomRow = useMemo(() => {
-    if (currentUser?.role !== "teacher" || !currentUser?.name) return null;
-    const myN = normalizeTeacherName(currentUser.name);
-    const list = (healthWalk365Classes || []).filter((r) => {
-      const t = r.homeroom_teacher_name;
-      if (!t || !String(t).trim()) return false;
-      return normalizeTeacherName(String(t)) === myN;
-    });
-    if (list.length === 0) return null;
-    list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-    return list[0];
-  }, [currentUser?.role, currentUser?.name, healthWalk365Classes]);
-
-  const myStudentHealthWalkClassRow = useMemo(() => {
-    if (currentUser?.role !== "student" || !myStudentClassName) return null;
-    return (
-      (healthWalk365Classes || []).find(
-        (r) => normalizeClubName(r.class_name) === normalizeClubName(myStudentClassName)
-      ) || null
-    );
-  }, [currentUser?.role, myStudentClassName, healthWalk365Classes]);
-
   const canCurrentTeacherEditSchedule = (clubName) => {
     if (!currentUser || currentUser.role !== "teacher" || !clubName) return false;
     const myNameN = normalizeTeacherName(currentUser.name);
     if (isVLeagueClub(clubName)) {
       return myNameN === vLeagueAdminNameNorm;
     }
-    if (isHealthWalk365Club(clubName)) {
-      if (myTeacherHealthWalkHomeroomRow?.class_name) return true;
-      return getClubsByName(clubName).some((c) =>
-        isTeacherAssignedToClubRow(c, myNameN)
-      );
-    }
     return getClubsByName(clubName).some(
       (c) => isTeacherAssignedToClubRow(c, myNameN)
     );
-  };
-
-  const canDeleteHealthWalkPloggingEvent = useCallback(
-    (item) => {
-      if (!page.clubName || !isHealthWalk365Club(page.clubName)) return false;
-      if (currentUser?.role !== "teacher") return false;
-      const myNameN = normalizeTeacherName(currentUser.name);
-      const isClubTeacher = getClubsByName(page.clubName).some((c) =>
-        isTeacherAssignedToClubRow(c, myNameN)
-      );
-      if (myTeacherHealthWalkHomeroomRow?.id && item?.class_id) {
-        return item.class_id === myTeacherHealthWalkHomeroomRow.id;
-      }
-      const eventClass = parseHealthWalkClassFromEventContent(item?.content);
-      if (!eventClass) return isClubTeacher;
-      if (!myTeacherHealthWalkHomeroomRow?.class_name) return isClubTeacher;
-      return (
-        normalizeClubName(myTeacherHealthWalkHomeroomRow.class_name) ===
-        normalizeClubName(eventClass)
-      );
-    },
-    [
-      page.clubName,
-      currentUser?.role,
-      currentUser?.name,
-      clubs,
-      myTeacherHealthWalkHomeroomRow,
-    ]
-  );
-
-  const handleAddHealthWalkPlogging = async () => {
-    setMainMsg("");
-    if (!isHealthWalk365Club(page.clubName)) return;
-    if (!myTeacherHealthWalkHomeroomRow?.id) {
-      setMainMsg(
-        "건강걷기 365 참가 학급에 담임으로 등록된 후에만 줍깅(플로깅) 실시일을 등록할 수 있습니다."
-      );
-      return;
-    }
-    if (!eventEditorDate) {
-      setMainMsg("달력에서 날짜를 선택해 주세요.");
-      return;
-    }
-    const club = await ensureHealthWalk365Club();
-    if (!club) {
-      setMainMsg(
-        "건강걷기 365 클럽 정보를 찾을 수 없습니다. Supabase clubs 테이블에 '건강걷기 365' 종목을 추가해 주세요."
-      );
-      return;
-    }
-    const sameDay = eventsByDate[eventEditorDate] || [];
-    const already = sameDay.some(
-      (row) => row.class_id === myTeacherHealthWalkHomeroomRow.id
-    );
-    if (already) {
-      setMainMsg("선택한 날짜에 이미 우리 반 줍깅(플로깅) 실시가 등록되어 있습니다.");
-      return;
-    }
-
-    const { error } = await supabase.from("health_walk365_plogging_days").insert([
-      {
-        club_id: club.id,
-        class_id: myTeacherHealthWalkHomeroomRow.id,
-        event_date: eventEditorDate,
-        created_by: currentUser.name,
-      },
-    ]);
-
-    if (error) {
-      setMainMsg(`줍깅(플로깅) 저장 실패: ${error.message}`);
-      return;
-    }
-
-    setEventEditorOpen(false);
-    setMainMsg("줍깅(플로깅) 실시일이 등록되었습니다.");
-    await loadHealthWalkPloggingForMonth(club.id, calendarMonth);
   };
 
   /** 학생: 학번 학급 / 교사: 담임 학급 — 응원 작성 대상 행 */
@@ -2715,26 +2437,6 @@ function App() {
     if (!club?.id) return;
     loadVLeagueRuleText(club.id);
   }, [page.type, clubTab, page.clubName, clubs, loadVLeagueRuleText]);
-
-  useEffect(() => {
-    if (page.type !== "clubMain") return;
-    if (!isHealthWalk365Club(page.clubName)) return;
-    let cancelled = false;
-    (async () => {
-      const club = await ensureHealthWalk365Club();
-      if (cancelled || !club?.id) return;
-      await loadHealthWalk365Classes(club.id);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    page.type,
-    page.clubName,
-    clubs,
-    loadHealthWalk365Classes,
-    ensureHealthWalk365Club,
-  ]);
 
   useEffect(() => {
     if (page.type !== "clubMain") return;
@@ -4107,13 +3809,6 @@ function App() {
       return;
     }
 
-    if (isHealthWalk365Club(selectedClubName)) {
-      setMainMsg(
-        "건강걷기 365는 신청·승인 없이 바로 일정을 볼 수 있습니다. (종목 페이지 입장하기)"
-      );
-      return;
-    }
-
     if (clubs.length === 0) {
       const refreshed = await loadClubs();
       if (refreshed.length === 0) {
@@ -4191,19 +3886,10 @@ function App() {
   const handleEnterClub = async (clubName) => {
     setMainMsg("");
     setShowVLeagueHomeStandingsPopup(false);
-    const club = isHealthWalk365Club(clubName)
-      ? await ensureHealthWalk365Club()
-      : getClubByName(clubName);
-    if (!club) {
-      if (isHealthWalk365Club(clubName)) {
-        setMainMsg(
-          "건강걷기 365 클럽 정보를 찾을 수 없습니다. Supabase clubs 테이블을 확인해 주세요."
-        );
-      }
-      return;
-    }
+    const club = getClubByName(clubName);
+    if (!club) return;
 
-    if (!isVLeagueClub(clubName) && !isHealthWalk365Club(clubName)) {
+    if (!isVLeagueClub(clubName)) {
       const status = getMyStatusForClub(club.id);
       if (status !== "approved") {
         setMainMsg("승인된 이후에만 종목 페이지에 접속할 수 있습니다.");
@@ -4223,10 +3909,7 @@ function App() {
       loadVLeagueRuleText(club.id);
     }
     await ensureClubEventsLoaded(clubName, monthStart(new Date()));
-    if (isHealthWalk365Club(clubName)) {
-      await loadHealthWalk365Classes(club.id);
-    }
-    if (!isVLeagueClub(clubName) && !isHealthWalk365Club(clubName)) {
+    if (!isVLeagueClub(clubName)) {
       await loadApprovedStudents(club.id);
       await loadAttendance(club.id, toYmd(new Date()));
     }
@@ -4235,19 +3918,11 @@ function App() {
     }
   };
 
-  const goTeacherMain = async (clubName) => {
+  const goTeacherMain = (clubName) => {
     setApplications([]);
     setMainMsg("");
     setShowVLeagueHomeStandingsPopup(false);
-    const club = isHealthWalk365Club(clubName)
-      ? await ensureHealthWalk365Club()
-      : getClubByName(clubName);
-    if (isHealthWalk365Club(clubName) && !club) {
-      setMainMsg(
-        "건강걷기 365 클럽 정보를 찾을 수 없습니다. Supabase clubs 테이블을 확인해 주세요."
-      );
-      return;
-    }
+    const club = getClubByName(clubName);
     setPage({ type: "clubMain", clubName });
     setClubTab("schedule");
     setCalendarMonth(monthStart(new Date()));
@@ -4259,11 +3934,8 @@ function App() {
       setShowVLeagueRulePopup(true);
       if (club) loadVLeagueRuleText(club.id);
     }
-    await ensureClubEventsLoaded(clubName, monthStart(new Date()));
-    if (club && isHealthWalk365Club(clubName)) {
-      await loadHealthWalk365Classes(club.id);
-    }
-    if (club && !isVLeagueClub(clubName) && !isHealthWalk365Club(clubName)) {
+    ensureClubEventsLoaded(clubName, monthStart(new Date()));
+    if (club && !isVLeagueClub(clubName)) {
       loadApprovedStudents(club.id);
       loadAttendance(club.id, toYmd(new Date()));
     }
@@ -4632,7 +4304,6 @@ function App() {
             <div className="tabs-container">
               {[
                 V_LEAGUE_LABEL,
-                "건강걷기 365",
                 "배구",
                 "농구",
                 "스포츠 스태킹",
@@ -4662,11 +4333,7 @@ function App() {
                       key={name}
                       className={
                         "sport-item" +
-                        (name === V_LEAGUE_LABEL
-                          ? " sport-item--wide"
-                          : name === "건강걷기 365"
-                            ? " sport-item--wide sport-item--health-walk365"
-                            : "")
+                        (name === V_LEAGUE_LABEL ? " sport-item--wide" : "")
                       }
                     >
                       <div
@@ -4700,7 +4367,6 @@ function App() {
                             {name === "육상" && "🏃‍♀️"}
                             {name === "컬러풀 스포츠" && "🎨"}
                             {name === "티볼" && "⚾"}
-                            {name === "건강걷기 365" && "🚶‍♀️"}
                             {name === V_LEAGUE_LABEL && "🏐"}
                             {name === "스포츠 스태킹" && (
                               <img
@@ -4735,18 +4401,12 @@ function App() {
                             )}
                           </div>
                         </div>
-                        {name !== V_LEAGUE_LABEL &&
-                          name !== "컬러풀 스포츠" &&
-                          name !== "건강걷기 365" && (
+                        {name !== V_LEAGUE_LABEL && name !== "컬러풀 스포츠" && (
                           <div className="sport-tournament-dday" aria-live="polite">
                             {tournamentYmd ? (
-                              <HomeHorizontalTicker
-                                key={`${club?.id || name}-${tournamentYmd}`}
-                                text={`대회일 ${tournamentDateLabel} · ${tournamentDdayLabel}`}
-                                rootClassName="sport-tournament-ticker-root"
-                                trackClassName="sport-tournament-ticker-track"
-                                segClassName="sport-tournament-ticker-seg"
-                              />
+                              <span className="sport-tournament-date sport-tournament-date--fixed">
+                                {`대회일 ${tournamentDateLabel} · ${tournamentDdayLabel}`}
+                              </span>
                             ) : (
                               <span className="sport-tournament-date">대회일 미정</span>
                             )}
@@ -5131,19 +4791,6 @@ function App() {
                                   </button>
                                 </div>
                               ) : null
-                            ) : isHealthWalk365Club(name) ? (
-                              isActive ? (
-                                <button
-                                  type="button"
-                                  className="enter-btn"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleEnterClub(name);
-                                  }}
-                                >
-                                  종목 페이지 입장하기
-                                </button>
-                              ) : null
                             ) : (
                               <>
                                 {myStatus === "pending" && (
@@ -5262,19 +4909,6 @@ function App() {
                                   응원 메시지 작성하기
                                 </button>
                               </div>
-                            ) : isHealthWalk365Club(name) ? (
-                              <div className="teacher-actions">
-                                <button
-                                  type="button"
-                                  className="teacher-btn"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    goTeacherMain(name);
-                                  }}
-                                >
-                                  메인페이지
-                                </button>
-                              </div>
                             ) : (
                               <div className="teacher-actions">
                                 <button
@@ -5382,7 +5016,7 @@ function App() {
                   </>
                 ) : (
                   <>
-                    {!isHealthWalk365Club(page.clubName) && (
+                    {!isVLeagueClub(page.clubName) && (
                       <>
                         <button
                           type="button"
@@ -5636,11 +5270,7 @@ function App() {
                           <div className="calendar-legend">
                             <div className="legend-item">
                               <span className="legend-swatch activity" />
-                              <span>
-                                {isHealthWalk365Club(page.clubName)
-                                  ? "줍깅(플로깅) 실시"
-                                  : "활동 있음"}
-                              </span>
+                              <span>활동 있음</span>
                             </div>
                             <div className="legend-item">
                               <span className="legend-dot" />
@@ -5657,58 +5287,7 @@ function App() {
                       )}
 
                       {canCurrentTeacherEditSchedule(page.clubName) &&
-                        !isVLeagueClub(page.clubName) &&
-                        isHealthWalk365Club(page.clubName) && (
-                        <div className="event-add event-add--health-walk">
-                          <div className="event-add-title">
-                            담임교사: 줍깅(플로깅) 실시일 등록 (달력 날짜를 클릭하세요)
-                          </div>
-                          {myTeacherHealthWalkHomeroomRow ? (
-                            eventEditorOpen ? (
-                              <>
-                                <div className="event-selected-date">
-                                  선택 날짜: {eventEditorDate}
-                                </div>
-                                <div className="health-walk-plogging-class">
-                                  등록 학급: {myTeacherHealthWalkHomeroomRow.class_name}
-                                </div>
-                                <div className="event-add-row">
-                                  <button
-                                    type="button"
-                                    className="event-save"
-                                    onClick={handleAddHealthWalkPlogging}
-                                  >
-                                    줍깅(플로깅) 실시 등록
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="event-cancel"
-                                    onClick={() => {
-                                      setEventEditorOpen(false);
-                                      setEventEditorDate("");
-                                    }}
-                                  >
-                                    취소
-                                  </button>
-                                </div>
-                              </>
-                            ) : (
-                              <div className="event-add-hint">
-                                날짜를 클릭하면 등록 버튼이 열립니다.
-                              </div>
-                            )
-                          ) : (
-                            <div className="event-add-hint">
-                              건강걷기 365 참가 학급(1~6학년)에 담임으로 등록된 교사만
-                              실시일을 등록할 수 있습니다.
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {canCurrentTeacherEditSchedule(page.clubName) &&
-                        !isVLeagueClub(page.clubName) &&
-                        !isHealthWalk365Club(page.clubName) && (
+                        !isVLeagueClub(page.clubName) && (
                         <div className="event-add">
                           <div className="event-add-title">
                             교사: 일정 추가 (달력 날짜를 클릭하세요)
@@ -5761,38 +5340,22 @@ function App() {
                     <div className="activity-panel">
                       <div className="activity-head">
                         {toYmd(selectedDate)}{" "}
-                        {isVLeagueClub(page.clubName)
-                          ? "경기 일정"
-                          : isHealthWalk365Club(page.clubName)
-                            ? "줍깅(플로깅) 실시 기록"
-                            : "활동 기록"}
+                        {isVLeagueClub(page.clubName) ? "경기 일정" : "활동 기록"}
                       </div>
                       <div className="activity-list">
                         {(() => {
                           const ymd = toYmd(selectedDate);
                           const items = eventsByDate[ymd] || [];
-                          const canDeleteForItem = (item) => {
+                          const canDeleteForItem = () => {
                             if (isVLeagueClub(page.clubName)) return false;
-                            if (isHealthWalk365Club(page.clubName)) {
-                              return canDeleteHealthWalkPloggingEvent(item);
-                            }
                             return canCurrentTeacherEditSchedule(page.clubName);
                           };
-                          const displayItems = isHealthWalk365Club(page.clubName)
-                            ? items.filter((it) =>
-                                isHealthWalkPloggingEventContent(it.content)
-                              )
-                            : items;
-                          if (displayItems.length === 0) {
+                          if (items.length === 0) {
                             return (
-                              <div className="activity-empty">
-                                {isHealthWalk365Club(page.clubName)
-                                  ? "이 날짜에 등록된 줍깅(플로깅) 실시가 없습니다."
-                                  : "기록이 없습니다."}
-                              </div>
+                              <div className="activity-empty">기록이 없습니다.</div>
                             );
                           }
-                          const orderedItems = [...displayItems].sort((a, b) => {
+                          const orderedItems = [...items].sort((a, b) => {
                             const aContent = String(a.content || "");
                             const bContent = String(b.content || "");
                             const rank = (txt) => {
@@ -5816,7 +5379,7 @@ function App() {
                                       <div className="activity-item-referee">{refSummary}</div>
                                     ) : null}
                                   </div>
-                                  {canDeleteForItem(it.content) ? (
+                                  {canDeleteForItem() ? (
                                     <button
                                       type="button"
                                       className="activity-item-delete"
@@ -5832,18 +5395,16 @@ function App() {
                         })()}
                       </div>
                       <div className="activity-hint">
-                        {isHealthWalk365Club(page.clubName)
-                          ? "날짜를 누르면 해당 날짜에 줍깅(플로깅)을 실시한 학급이 표시됩니다."
-                          : "날짜를 누르면 해당 날짜의 경기 일정이 표시됩니다."}
+                        {isVLeagueClub(page.clubName)
+                          ? "날짜를 누르면 해당 날짜의 경기 일정이 표시됩니다."
+                          : "날짜를 누르면 해당 날짜의 활동 기록이 표시됩니다."}
                       </div>
                     </div>
                   </div>
                 </div>
               )}
 
-              {clubTab === "members" &&
-                !isVLeagueClub(page.clubName) &&
-                !isHealthWalk365Club(page.clubName) && (
+              {clubTab === "members" && !isVLeagueClub(page.clubName) && (
                 <div className="club-page-body">
                   <div className="members-head">
                     <div className="members-title">가입 학생 명단</div>
@@ -7108,7 +6669,7 @@ function App() {
 
               {clubTab === "attendance" &&
                 !isVLeagueClub(page.clubName) &&
-                !isHealthWalk365Club(page.clubName) && (
+                !isVLeagueClub(page.clubName) && (
                 <div className="club-page-body">
                   <div className="attendance-head">
                     <div className="attendance-title">출석</div>

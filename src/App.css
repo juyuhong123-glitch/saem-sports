@@ -480,39 +480,6 @@ body {
   background: linear-gradient(145deg, #ffffff 0%, #c9f6ff 100%);
 }
 
-/* 건강걷기 365: 새샘 V리그 바로 아래 전체 너비, 제목 중앙 */
-.sport-item--health-walk365 .sport-tab:not(.active) {
-  min-height: 96px;
-  padding: 10px 14px 12px;
-  gap: 8px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.sport-item--health-walk365 .sport-tab:not(.active) .sport-tab-title,
-.sport-item--health-walk365 .sport-tab.active .sport-tab-title {
-  width: 100%;
-  justify-content: center;
-}
-
-.sport-item--health-walk365 .sport-tab:not(.active) .sport-tab-title-main,
-.sport-item--health-walk365 .sport-tab.active .sport-tab-title-main {
-  align-items: center;
-}
-
-.event-add--health-walk .health-walk-plogging-class {
-  font-size: 14px;
-  font-weight: 700;
-  color: #334155;
-  text-align: center;
-}
-
-.event-add--health-walk .event-add-row {
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .sport-tab.active {
     animation: none;
@@ -759,6 +726,15 @@ body {
   font-weight: inherit;
   color: inherit;
   letter-spacing: inherit;
+}
+
+.sport-tournament-date--fixed {
+  display: block;
+  width: 100%;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .sport-vleague-board-head {
