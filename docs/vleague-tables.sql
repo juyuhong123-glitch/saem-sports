@@ -111,8 +111,8 @@ on public.vleague_referee_assignments (match_id, assignment_role);
 --    where club_id = '잘못_넣었던_uuid';
 
 -- === vleague_cheers: 담임 교사 응원 글은 student_id 없이 저장할 수 있어야 합니다. ===
--- (이미 테이블이 있고 student_id 가 NOT NULL 이면 아래 한 줄 실행)
--- alter table public.vleague_cheers alter column student_id drop not null;
+-- (이미 테이블이 있고 student_id 가 NOT NULL 이면 아래 실행 — 상세: docs/migrations/20260519-vleague-cheers-teacher-null-student-id.sql)
+alter table public.vleague_cheers alter column student_id drop not null;
 
 -- === 응원 메시지 자동 정리 (KST 기준) ===
 -- 요구사항:
@@ -240,7 +240,8 @@ begin
     join public.vleague_cheers c
       on c.club_id = ct.club_id
      and c.class_id = ct.class_id
-    where timezone('Asia/Seoul', c.created_at) >= ((v_target_date::timestamp - interval '1 day') + interval '14 hour')
+    where c.student_id is not null
+      and timezone('Asia/Seoul', c.created_at) >= ((v_target_date::timestamp - interval '1 day') + interval '14 hour')
       and timezone('Asia/Seoul', c.created_at) <  (v_target_date::timestamp + interval '13 hour')
   ),
   picked as (
