@@ -117,7 +117,7 @@ alter table public.vleague_cheers alter column student_id drop not null;
 -- === 응원 메시지 자동 정리 (KST 기준) ===
 -- 요구사항:
 -- 1) 경기 당일 13:00부터는 앱에서 자동 숨김 (프론트에서 처리)
--- 2) 경기 당일 14:00부터는 Supabase에서 물리 삭제 (아래 함수+cron)
+-- 2) 작성 시각(KST) 기준 3일이 지나면 Supabase에서 물리 삭제 (아래 함수+cron)
 --
 -- 주의:
 -- - created_at은 timestamptz이므로 KST 기준 비교를 위해 timezone('Asia/Seoul', ...)를 사용합니다.
@@ -134,22 +134,8 @@ declare
 begin
   v_now_kst := timezone('Asia/Seoul', now());
 
-  with expired as (
-    select distinct c.id
-    from public.vleague_cheers c
-    join public.vleague_matches m
-      on m.club_id = c.club_id
-     and (m.home_class_id = c.class_id or m.away_class_id = c.class_id)
-    where m.match_date is not null
-      -- 실제 응원 작성 허용 창(전날 14:00 ~ 당일 13:00)에서 작성된 글만 정리 대상
-      and timezone('Asia/Seoul', c.created_at) >= ((m.match_date::timestamp - interval '1 day') + interval '14 hour')
-      and timezone('Asia/Seoul', c.created_at) <  (m.match_date::timestamp + interval '13 hour')
-      -- 당일 14:00 이후 삭제
-      and v_now_kst >= (m.match_date::timestamp + interval '14 hour')
-  )
   delete from public.vleague_cheers c
-  using expired e
-  where c.id = e.id;
+  where v_now_kst >= timezone('Asia/Seoul', c.created_at) + interval '3 days';
 
   get diagnostics v_deleted_count = row_count;
   return v_deleted_count;
@@ -157,7 +143,7 @@ end;
 $$;
 
 comment on function public.delete_expired_vleague_cheers_kst is
-'KST 기준으로 경기 당일 14:00이 지난 V리그 응원 메시지를 삭제한다.';
+'KST 기준으로 응원 글 작성 시각부터 3일이 지난 V리그 응원 메시지를 삭제한다.';
 
 -- 기존 스케줄이 있으면 제거 후 재등록
 select cron.unschedule('vleague-cheers-delete-2pm-kst')
@@ -167,7 +153,7 @@ where exists (
   where jobname = 'vleague-cheers-delete-2pm-kst'
 );
 
--- 매시 5분에 실행: 14:00 이후 대상은 다음 실행 시점에 자동 삭제
+-- 매시 5분에 실행: 3일이 지난 응원 글을 다음 실행 시점에 자동 삭제
 select cron.schedule(
   'vleague-cheers-delete-2pm-kst',
   '5 * * * *',
