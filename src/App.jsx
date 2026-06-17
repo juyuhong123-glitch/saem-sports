@@ -297,6 +297,124 @@ function HomeHorizontalTicker({
   );
 }
 
+const BRACKET_WIRE_BASE =
+  "M50 0V11M23 11H77M23 11V22M77 11V22M11 22H35M11 22V44M35 22V44M65 22H89M65 22V44M89 22V44";
+
+const BRACKET_ADVANCE_PATHS = {
+  s1a: "M11 44V22H23V11H50V0",
+  s1b: "M35 44V22H23V11H50V0",
+  s2a: "M65 44V22H77V11H50V0",
+  s2b: "M89 44V22H77V11H50V0",
+};
+
+function getTournamentWinnerSideFromContent(content) {
+  const raw = String(content || "");
+  const withWin = raw.match(/승리점수\s*(\d+)\s*\|\s*결과\s*(\d+)\s*:\s*(\d+)/);
+  if (withWin) {
+    const winScore = Number(withWin[1]);
+    const homeScore = Number(withWin[2]);
+    const awayScore = Number(withWin[3]);
+    if (!Number.isFinite(winScore) || winScore <= 0) return null;
+    if (homeScore === winScore && awayScore !== winScore) return "home";
+    if (awayScore === winScore && homeScore !== winScore) return "away";
+    return null;
+  }
+  const m = raw.match(/결과\s*(\d+)\s*:\s*(\d+)/);
+  if (!m) return null;
+  const homeScore = Number(m[1]);
+  const awayScore = Number(m[2]);
+  if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore) || homeScore === awayScore) {
+    return null;
+  }
+  return homeScore > awayScore ? "home" : "away";
+}
+
+function getBracketSparkSlotFromEvent(content, winnerSide) {
+  const c = String(content || "");
+  if (!winnerSide) return null;
+  if (c.includes("준결승 1")) return winnerSide === "home" ? "s1a" : "s1b";
+  if (c.includes("준결승 2")) return winnerSide === "home" ? "s2a" : "s2b";
+  if (c.includes("결승")) return "final";
+  return null;
+}
+
+function parseBracketTeamLabel(raw) {
+  const s = String(raw || "").trim();
+  if (!s || s === "-") return null;
+  const rankM = /^(\d+)\s*위\s+(.+)$/.exec(s);
+  if (!rankM) return { single: s };
+  const rest = String(rankM[2] || "").trim();
+  const classM = /^(.*)\(([^)]+)\)\s*$/.exec(rest);
+  if (classM && String(classM[1] || "").trim()) {
+    return {
+      rank: `${rankM[1]}위`,
+      name: String(classM[1]).trim(),
+      cls: `(${String(classM[2]).trim()})`,
+    };
+  }
+  return {
+    rank: `${rankM[1]}위`,
+    name: rest,
+    cls: null,
+  };
+}
+
+function getTeamClassShortLabel(teamLabel) {
+  const parsed = parseBracketTeamLabel(teamLabel);
+  if (!parsed) return "팀";
+  if (parsed.cls) return parsed.cls.replace(/^\(|\)$/g, "");
+  if (parsed.name) return parsed.name;
+  return parsed.rank || "팀";
+}
+
+function formatTeamForResultInput(teamLabel) {
+  const parsed = parseBracketTeamLabel(teamLabel);
+  if (!parsed) return String(teamLabel || "").trim() || "-";
+  if (parsed.single) return parsed.single;
+  return parsed.cls
+    ? `${parsed.rank} ${parsed.name} ${parsed.cls}`
+    : `${parsed.rank} ${parsed.name}`;
+}
+
+function parseTournamentMatchInfo(content) {
+  const c = String(content || "");
+  let ruleLabel = "한 경기 승부";
+  let ruleHint = "각 팀 점수를 입력하세요. 점수가 더 높은 팀이 승리합니다.";
+  let gameNo = null;
+  if (c.includes("3판 2선승")) {
+    ruleLabel = "3판 2선승";
+    ruleHint =
+      "이번 경기(세트) 점수를 입력하세요. 점수가 더 높은 팀이 이 세트를 승리합니다.";
+    const gm = c.match(/결승\s*(\d+)\s*차전/);
+    gameNo = gm ? Number(gm[1]) : null;
+  } else if (c.includes("단판")) {
+    ruleLabel = "단판";
+    ruleHint = "각 팀 점수를 입력하세요. 점수가 더 높은 팀이 승리합니다.";
+    const sm = c.match(/준결승\s*(\d+)/);
+    gameNo = sm ? Number(sm[1]) : null;
+  }
+  return { ruleLabel, ruleHint, gameNo };
+}
+
+function BracketTeamBox({ label, className }) {
+  const parsed = parseBracketTeamLabel(label);
+  if (!parsed) {
+    return <div className={className}>-</div>;
+  }
+  if (parsed.single) {
+    return <div className={className}>{parsed.single}</div>;
+  }
+  return (
+    <div className={className}>
+      <span className="vleague-bracket-box-rank">{parsed.rank}</span>
+      <span className="vleague-bracket-box-name">{parsed.name}</span>
+      {parsed.cls ? (
+        <span className="vleague-bracket-box-class">{parsed.cls}</span>
+      ) : null}
+    </div>
+  );
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState(null); // {role, name, id?}
   const [clubs, setClubs] = useState([]); // Supabase에서 불러온 클럽 목록
@@ -346,6 +464,24 @@ function App() {
   });
   const [vLeagueSavingMatches, setVLeagueSavingMatches] = useState(false);
   const [vLeaguePushingToCalendar, setVLeaguePushingToCalendar] = useState(false);
+  /** 토너먼트 일정 생성 */
+  const [vLeagueTournamentStartDate, setVLeagueTournamentStartDate] = useState(
+    () => {
+      const d = new Date();
+      const pad2 = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    }
+  );
+  const [vLeagueTournamentDraft, setVLeagueTournamentDraft] = useState([]);
+  const [vLeagueTournamentSaving, setVLeagueTournamentSaving] = useState(false);
+  const [vLeagueTournamentEvents, setVLeagueTournamentEvents] = useState([]);
+  const [vLeagueTournamentLoading, setVLeagueTournamentLoading] = useState(false);
+  const [vLeagueTournamentResultDrafts, setVLeagueTournamentResultDrafts] = useState({});
+  const [vLeagueTournamentResultSavingId, setVLeagueTournamentResultSavingId] =
+    useState(null);
+  const [vLeagueTournamentDeletingId, setVLeagueTournamentDeletingId] = useState(null);
+  const [vLeagueTournamentPostponingId, setVLeagueTournamentPostponingId] =
+    useState(null);
   const [vLeagueSyncingCalendar, setVLeagueSyncingCalendar] = useState(false);
   const [vLeagueDeletingMatchesAll, setVLeagueDeletingMatchesAll] = useState(false);
   const [vLeagueValidating, setVLeagueValidating] = useState(false);
@@ -400,6 +536,11 @@ function App() {
   const [vLeagueRuleSaving, setVLeagueRuleSaving] = useState(false);
   const [showVLeagueRulePopup, setShowVLeagueRulePopup] = useState(false);
   const [showVLeagueHomeStandingsPopup, setShowVLeagueHomeStandingsPopup] = useState(false);
+  const [showVLeagueHomeTournamentPopup, setShowVLeagueHomeTournamentPopup] =
+    useState(false);
+  const [homeVLeagueTournamentEvents, setHomeVLeagueTournamentEvents] = useState([]);
+  const [homeVLeagueTournamentLoading, setHomeVLeagueTournamentLoading] = useState(false);
+  const [bracketSparkSlot, setBracketSparkSlot] = useState(null);
   const [homeTournamentYmdByClubId, setHomeTournamentYmdByClubId] = useState({});
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const d = new Date();
@@ -414,6 +555,17 @@ function App() {
   const [eventEditorOpen, setEventEditorOpen] = useState(false);
   const [eventEditorDate, setEventEditorDate] = useState("");
   const [newEventContent, setNewEventContent] = useState("");
+
+  const closeHomeTournamentPopupToStandings = useCallback(() => {
+    setShowVLeagueHomeTournamentPopup(false);
+    setShowVLeagueHomeStandingsPopup(true);
+  }, []);
+
+  useEffect(() => {
+    if (!bracketSparkSlot) return undefined;
+    const timer = window.setTimeout(() => setBracketSparkSlot(null), 3600);
+    return () => window.clearTimeout(timer);
+  }, [bracketSparkSlot]);
   const [approvedStudents, setApprovedStudents] = useState([]); // [{student_id, student_name}]
   const [attendanceByStudentId, setAttendanceByStudentId] = useState({}); // { [student_id]: true|false }
   const [attendanceLoading, setAttendanceLoading] = useState(false);
@@ -731,10 +883,13 @@ function App() {
   const formatVLeagueMatchToken = (matchId) =>
     matchId ? ` ⟦vm:${matchId}⟧` : "";
 
+  const getVLeagueLabel = (leagueKey) =>
+    leagueKey === "malgeun" ? "맑은샘" : "고운샘";
+
   const formatVLeagueEventContent = (m, clubIdForNameMap) => {
     const homeName = vLeagueScheduleTeamLabelById[m.home_class_id] || "학급";
     const awayName = vLeagueScheduleTeamLabelById[m.away_class_id] || "학급";
-    const leagueLabel = m.league === "malgeun" ? "맑은샘" : "고운샘";
+    const leagueLabel = getVLeagueLabel(m.league);
     return `[${leagueLabel}] ${homeName} vs ${awayName}${formatVLeagueMatchToken(
       m.id
     )}`;
@@ -1398,6 +1553,291 @@ function App() {
     setVLeagueMatches(dedupeVLeagueMatchesByRound(data || []));
   }, [isVLeagueAdmin, vLeagueAdminNameNorm]);
 
+  const loadVLeagueTournamentEvents = useCallback(
+    async (clubIds, leagueKey) => {
+      const ids = Array.isArray(clubIds)
+        ? clubIds.filter(Boolean)
+        : [clubIds].filter(Boolean);
+      if (ids.length === 0) {
+        setVLeagueTournamentEvents([]);
+        return;
+      }
+      setVLeagueTournamentLoading(true);
+      const marker = `[토너먼트][${getVLeagueLabel(leagueKey)}]`;
+      const { data, error } = await supabase
+        .from("club_events")
+        .select("id, club_id, event_date, content")
+        .in("club_id", ids)
+        .ilike("content", `%${marker}%`)
+        .order("event_date", { ascending: true });
+      setVLeagueTournamentLoading(false);
+      if (error) {
+        setMainMsg(`토너먼트 일정 로딩 실패: ${error.message}`);
+        setVLeagueTournamentEvents([]);
+        return;
+      }
+      setVLeagueTournamentEvents(data || []);
+    },
+    [setMainMsg]
+  );
+
+  const stripTournamentResultSuffix = useCallback((content) => {
+    return String(content || "")
+      .replace(
+        /\s*\|\s*승리점수\s*\d+\s*\|\s*결과\s*\d+\s*:\s*\d+(\s*\|\s*승리팀\s*[^|]+)?\s*$/g,
+        ""
+      )
+      .replace(/\s*\|\s*결과\s*\d+\s*:\s*\d+(\s*\|\s*승리팀\s*[^|]+)?\s*$/g, "")
+      .trim();
+  }, []);
+
+  const parseTournamentTeams = useCallback((content) => {
+    const base = stripTournamentResultSuffix(content);
+    const rhs = String(base).split(":").slice(1).join(":").trim();
+    if (!rhs.includes(" vs ")) return null;
+    const [home, away] = rhs.split(" vs ").map((s) => String(s || "").trim());
+    if (!home || !away) return null;
+    return { home, away };
+  }, [stripTournamentResultSuffix]);
+
+  const parseTournamentSavedScore = useCallback((content) => {
+    const c = String(content || "");
+    const withWin = c.match(/승리점수\s*(\d+)\s*\|\s*결과\s*(\d+)\s*:\s*(\d+)/);
+    if (withWin) {
+      return { winScore: withWin[1], home: withWin[2], away: withWin[3] };
+    }
+    const m = c.match(/결과\s*(\d+)\s*:\s*(\d+)/);
+    if (!m) return null;
+    return { home: m[1], away: m[2] };
+  }, []);
+
+  const buildTournamentResultContent = useCallback(
+    (content, winScore, homeScore, awayScore) => {
+      const base = stripTournamentResultSuffix(content);
+      const teams = parseTournamentTeams(base);
+      let winnerText = "";
+      if (teams) {
+        const homeWin =
+          Number(homeScore) === Number(winScore) &&
+          Number(awayScore) !== Number(winScore);
+        const winner = homeWin ? teams.home : teams.away;
+        winnerText = ` | 승리팀 ${winner}`;
+      }
+      return `${base} | 승리점수 ${winScore} | 결과 ${homeScore}:${awayScore}${winnerText}`.trim();
+    },
+    [stripTournamentResultSuffix, parseTournamentTeams]
+  );
+
+  const handleSaveVLeagueTournamentResult = useCallback(
+    async (row) => {
+      if (!isVLeagueAdmin) {
+        setMainMsg("대진표 생성/수정은 관리자만 가능합니다.");
+        return;
+      }
+      const draft = vLeagueTournamentResultDrafts[row.id] || {};
+      const saved = parseTournamentSavedScore(row.content) || {};
+      const homeRaw = draft.home ?? saved.home ?? "";
+      const awayRaw = draft.away ?? saved.away ?? "";
+      const winRaw = draft.winScore ?? saved.winScore ?? "";
+      const homeScore = Number(homeRaw);
+      const awayScore = Number(awayRaw);
+      const winScore = Number(winRaw);
+      if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) {
+        setMainMsg("점수를 숫자로 입력해 주세요.");
+        return;
+      }
+      if (!Number.isFinite(winScore) || winScore <= 0) {
+        setMainMsg("경기별 승리 점수를 1 이상 숫자로 입력해 주세요.");
+        return;
+      }
+      if (homeScore < 0 || awayScore < 0) {
+        setMainMsg("점수는 0 이상이어야 합니다.");
+        return;
+      }
+      const homeWin = homeScore === winScore && awayScore !== winScore;
+      const awayWin = awayScore === winScore && homeScore !== winScore;
+      if (!homeWin && !awayWin) {
+        setMainMsg("한 팀만 '승리 점수'에 도달해야 결과를 저장할 수 있습니다.");
+        return;
+      }
+      const nextContent = buildTournamentResultContent(
+        row.content,
+        winScore,
+        homeScore,
+        awayScore
+      );
+      setVLeagueTournamentResultSavingId(row.id);
+      try {
+        const { error } = await supabase
+          .from("club_events")
+          .update({ content: nextContent })
+          .eq("id", row.id);
+        if (error) {
+          setMainMsg(`토너먼트 결과 저장 실패: ${error.message}`);
+          return;
+        }
+        setVLeagueTournamentEvents((prev) =>
+          (prev || []).map((ev) =>
+            ev.id === row.id ? { ...ev, content: nextContent } : ev
+          )
+        );
+        setHomeVLeagueTournamentEvents((prev) =>
+          (prev || []).map((ev) =>
+            ev.id === row.id ? { ...ev, content: nextContent } : ev
+          )
+        );
+        const winnerSide = homeWin ? "home" : "away";
+        const sparkSlot = getBracketSparkSlotFromEvent(row.content, winnerSide);
+        if (sparkSlot) setBracketSparkSlot(sparkSlot);
+        setVLeagueTournamentResultDrafts((prev) => {
+          const next = { ...prev };
+          delete next[row.id];
+          return next;
+        });
+        setMainMsg("토너먼트 경기 결과를 저장했습니다.");
+      } finally {
+        setVLeagueTournamentResultSavingId(null);
+      }
+    },
+    [
+      isVLeagueAdmin,
+      vLeagueTournamentResultDrafts,
+      parseTournamentSavedScore,
+      buildTournamentResultContent,
+      setMainMsg,
+    ]
+  );
+
+  const handleDeleteVLeagueTournamentEvent = useCallback(
+    async (row) => {
+      if (!isVLeagueAdmin) {
+        setMainMsg("대진표 생성/수정은 관리자만 가능합니다.");
+        return;
+      }
+      const ok = window.confirm("이 토너먼트 일정을 삭제할까요?");
+      if (!ok) return;
+      const vClubIds = Array.from(
+        new Set(
+          (clubs || [])
+            .filter(
+              (c) =>
+                normalizeClubName(c?.name) === normalizeClubName(V_LEAGUE_LABEL)
+            )
+            .map((c) => c?.id)
+            .filter(Boolean)
+        )
+      );
+      setVLeagueTournamentDeletingId(row.id);
+      try {
+        const { error } = await supabase.from("club_events").delete().eq("id", row.id);
+        if (error) {
+          setMainMsg(`토너먼트 일정 삭제 실패: ${error.message}`);
+          return;
+        }
+        setVLeagueTournamentEvents((prev) => (prev || []).filter((ev) => ev.id !== row.id));
+        setMainMsg("토너먼트 일정을 삭제했습니다.");
+        await loadVLeagueTournamentEvents(vClubIds, vLeagueGradeTab);
+        await loadEventsForMonth(vClubIds, calendarMonth);
+      } finally {
+        setVLeagueTournamentDeletingId(null);
+      }
+    },
+    [
+      isVLeagueAdmin,
+      clubs,
+      normalizeClubName,
+      loadVLeagueTournamentEvents,
+      vLeagueGradeTab,
+      loadEventsForMonth,
+      calendarMonth,
+    ]
+  );
+
+  const handlePostponeVLeagueTournamentEvent = useCallback(
+    async (row) => {
+      if (!isVLeagueAdmin) {
+        setMainMsg("대진표 생성/수정은 관리자만 가능합니다.");
+        return;
+      }
+      const ok = window.confirm("이 토너먼트 일정을 맨 뒤 날짜로 미룰까요?");
+      if (!ok) return;
+      const vClubIds = Array.from(
+        new Set(
+          (clubs || [])
+            .filter(
+              (c) =>
+                normalizeClubName(c?.name) === normalizeClubName(V_LEAGUE_LABEL)
+            )
+            .map((c) => c?.id)
+            .filter(Boolean)
+        )
+      );
+      const clubId = vClubIds[0];
+      if (!clubId) {
+        setMainMsg("새샘 V리그 club_id를 찾지 못했습니다.");
+        return;
+      }
+      setVLeagueTournamentPostponingId(row.id);
+      try {
+        const maxDate = (vLeagueTournamentEvents || [])
+          .map((ev) => String(ev.event_date || ""))
+          .filter(Boolean)
+          .sort()
+          .pop();
+        let cand = nextPlayableYmd(
+          addDaysYmd(maxDate || row.event_date || toYmd(new Date()), 1),
+          vLeagueGradeTab
+        );
+        let nextDate = cand;
+        for (let i = 0; i < 366; i += 1) {
+          if (!nextDate) break;
+          const { data, error } = await supabase
+            .from("club_events")
+            .select("id")
+            .eq("club_id", clubId)
+            .eq("event_date", nextDate)
+            .limit(1);
+          if (error) {
+            setMainMsg(`일정 충돌 확인 실패: ${error.message}`);
+            return;
+          }
+          if ((data || []).length === 0) break;
+          cand = nextPlayableYmd(addDaysYmd(nextDate, 1), vLeagueGradeTab);
+          nextDate = cand;
+        }
+        if (!nextDate) {
+          setMainMsg("다음 가능한 날짜를 찾지 못했습니다.");
+          return;
+        }
+        const { error: upErr } = await supabase
+          .from("club_events")
+          .update({ event_date: nextDate })
+          .eq("id", row.id);
+        if (upErr) {
+          setMainMsg(`토너먼트 일정 이동 실패: ${upErr.message}`);
+          return;
+        }
+        setMainMsg(`일정을 ${nextDate}로 뒤로 미뤘습니다.`);
+        await loadVLeagueTournamentEvents(vClubIds, vLeagueGradeTab);
+        await loadEventsForMonth(vClubIds, calendarMonth);
+      } finally {
+        setVLeagueTournamentPostponingId(null);
+      }
+    },
+    [
+      isVLeagueAdmin,
+      clubs,
+      normalizeClubName,
+      vLeagueTournamentEvents,
+      nextPlayableYmd,
+      addDaysYmd,
+      vLeagueGradeTab,
+      loadVLeagueTournamentEvents,
+      loadEventsForMonth,
+      calendarMonth,
+    ]
+  );
+
   const getClubByName = (name) => {
     const n = normalizeClubName(name);
     if (!n) return null;
@@ -1429,6 +1869,28 @@ function App() {
       ),
     [clubs]
   );
+
+  const loadHomeVLeagueTournamentEvents = useCallback(async () => {
+    const vClubIds = getVLeagueClubIds();
+    if (vClubIds.length === 0) {
+      setHomeVLeagueTournamentEvents([]);
+      return;
+    }
+    setHomeVLeagueTournamentLoading(true);
+    const { data, error } = await supabase
+      .from("club_events")
+      .select("id, club_id, event_date, content")
+      .in("club_id", vClubIds)
+      .ilike("content", "[토너먼트]%")
+      .order("event_date", { ascending: true });
+    setHomeVLeagueTournamentLoading(false);
+    if (error) {
+      setMainMsg(`토너먼트 진행표 로딩 실패: ${error.message}`);
+      setHomeVLeagueTournamentEvents([]);
+      return;
+    }
+    setHomeVLeagueTournamentEvents(data || []);
+  }, [getVLeagueClubIds]);
 
   const myStudentClassName = useMemo(
     () => formatClassNameFromStudentId(currentUser?.id),
@@ -1470,6 +1932,22 @@ function App() {
     clubs,
     loadVLeagueClasses,
     loadVLeagueMatches,
+  ]);
+
+  useEffect(() => {
+    if (page.type !== "clubMain" || clubTab !== "vTournament") return;
+    if (!isVLeagueClub(page.clubName)) return;
+    const vClubIds = getVLeagueClubIds();
+    if (vClubIds.length === 0) return;
+    loadVLeagueTournamentEvents(vClubIds, vLeagueGradeTab);
+  }, [
+    page.type,
+    clubTab,
+    page.clubName,
+    clubs,
+    vLeagueGradeTab,
+    loadVLeagueTournamentEvents,
+    getVLeagueClubIds,
   ]);
 
   useEffect(() => {
@@ -1663,6 +2141,10 @@ function App() {
           losses: 0,
           draws: 0,
           points: 0,
+          goals_for: 0,
+          goals_against: 0,
+          goal_diff: 0,
+          h2h_wins: 0,
         });
       }
       const matches = (vLeagueMatches || []).filter(
@@ -1679,6 +2161,10 @@ function App() {
         const hs = Number(m.home_score);
         const as = Number(m.away_score);
         if (!Number.isFinite(hs) || !Number.isFinite(as)) continue;
+        home.goals_for += hs;
+        home.goals_against += as;
+        away.goals_for += as;
+        away.goals_against += hs;
         if (hs > as) {
           home.wins += 1;
           home.points += 3;
@@ -1694,11 +2180,42 @@ function App() {
           away.points += 1;
         }
       }
-      return [...teamMap.values()]
+      const rows = [...teamMap.values()].map((row) => ({
+        ...row,
+        goal_diff: row.goals_for - row.goals_against,
+      }));
+
+      // 동률(승점+득실차) 그룹에서만 승자승을 계산
+      const tieGroups = new Map();
+      for (const row of rows) {
+        const k = `${row.points}|${row.goal_diff}`;
+        if (!tieGroups.has(k)) tieGroups.set(k, []);
+        tieGroups.get(k).push(row.class_id);
+      }
+      const classToTieSet = new Map();
+      for (const ids of tieGroups.values()) {
+        if (ids.length < 2) continue;
+        const set = new Set(ids);
+        for (const id of ids) classToTieSet.set(id, set);
+      }
+
+      for (const m of matches) {
+        const hs = Number(m.home_score);
+        const as = Number(m.away_score);
+        if (!Number.isFinite(hs) || !Number.isFinite(as) || hs === as) continue;
+        const homeTie = classToTieSet.get(m.home_class_id);
+        const awayTie = classToTieSet.get(m.away_class_id);
+        if (!homeTie || !awayTie || homeTie !== awayTie) continue;
+        const winnerId = hs > as ? m.home_class_id : m.away_class_id;
+        const winner = teamMap.get(winnerId);
+        if (winner) winner.h2h_wins += 1;
+      }
+
+      return rows
         .sort((a, b) => {
           if (b.points !== a.points) return b.points - a.points;
-          if (b.wins !== a.wins) return b.wins - a.wins;
-          if (a.losses !== b.losses) return a.losses - b.losses;
+          if (b.goal_diff !== a.goal_diff) return b.goal_diff - a.goal_diff;
+          if (b.h2h_wins !== a.h2h_wins) return b.h2h_wins - a.h2h_wins;
           return String(a.team_name).localeCompare(String(b.team_name), "ko");
         })
         .map((row, idx) => ({ ...row, rank_order: idx + 1 }));
@@ -1713,6 +2230,175 @@ function App() {
         : getComputedStandingsByLeague("goun");
     return classes;
   }, [getComputedStandingsByLeague, vLeagueGradeTab]);
+
+  const homeTournamentBracketRows = useMemo(() => {
+    const leagueLabel = getVLeagueLabel(vLeagueGradeTab);
+    const list = (homeVLeagueTournamentEvents || [])
+      .filter((ev) => String(ev.content || "").includes(`[토너먼트][${leagueLabel}]`))
+      .sort((a, b) => String(a.event_date || "").localeCompare(String(b.event_date || "")));
+    const findBy = (k) => list.find((ev) => String(ev.content || "").includes(k)) || null;
+    const toTeams = (ev, fallback) => {
+      if (!ev) return fallback;
+      const teams = parseTournamentTeams(ev.content);
+      if (teams) return `${teams.home} vs ${teams.away}`;
+      const display = formatEventContentForDisplay(ev.content);
+      const rhs = String(display).split(":").slice(1).join(":").trim();
+      return rhs || fallback;
+    };
+    const toFinalLabel = (ev) => {
+      const raw = toTeams(ev, "결승전");
+      const norm = String(raw).replace(/\s+/g, " ").trim();
+      if (/준결승\s*1\s*승자\s*vs\s*준결승\s*2\s*승자/.test(norm)) {
+        return "결승전";
+      }
+      return raw || "결승전";
+    };
+    const semi1Ev = findBy("준결승 1");
+    const semi2Ev = findBy("준결승 2");
+    const semi1Win = getTournamentWinnerSideFromContent(semi1Ev?.content);
+    const semi2Win = getTournamentWinnerSideFromContent(semi2Ev?.content);
+    const finalEv = findBy("결승 1차전") || findBy("결승");
+    const finalWin = getTournamentWinnerSideFromContent(finalEv?.content);
+    return {
+      semi1: toTeams(semi1Ev, "-"),
+      semi2: toTeams(semi2Ev, "-"),
+      final: toFinalLabel(finalEv),
+      hasAny: list.length > 0,
+      winners: {
+        s1a: semi1Win === "home",
+        s1b: semi1Win === "away",
+        s2a: semi2Win === "home",
+        s2b: semi2Win === "away",
+        final: Boolean(finalWin),
+      },
+      losers: {
+        s1a: semi1Win === "away",
+        s1b: semi1Win === "home",
+        s2a: semi2Win === "away",
+        s2b: semi2Win === "home",
+      },
+    };
+  }, [homeVLeagueTournamentEvents, vLeagueGradeTab, formatEventContentForDisplay, parseTournamentTeams]);
+
+  const handleGenerateVLeagueTournamentDraft = useCallback(() => {
+    if (!isVLeagueAdmin) {
+      setMainMsg("대진표 생성/수정은 관리자만 가능합니다.");
+      return;
+    }
+    const standings = getComputedStandingsByLeague(vLeagueGradeTab);
+    if ((standings || []).length < 4) {
+      setMainMsg("토너먼트 일정 생성을 위해 최소 4개 학급 순위가 필요합니다.");
+      setVLeagueTournamentDraft([]);
+      return;
+    }
+    const top4 = standings.slice(0, 4);
+    const semiPairs = [
+      { a: top4[0], b: top4[3] }, // 1 vs 4
+      { a: top4[1], b: top4[2] }, // 2 vs 3
+    ];
+    let cur = nextPlayableYmd(vLeagueTournamentStartDate, vLeagueGradeTab);
+    const leagueLabel = getVLeagueLabel(vLeagueGradeTab);
+    const rows = [];
+
+    // 준결승(단판) 2경기
+    for (let idx = 0; idx < semiPairs.length; idx += 1) {
+      const p = semiPairs[idx];
+      rows.push({
+        order: rows.length + 1,
+        event_date: cur,
+        content: `[토너먼트][${leagueLabel}] 준결승 ${idx + 1}(단판): ${p.a.rank_order}위 ${p.a.team_name} vs ${p.b.rank_order}위 ${p.b.team_name}`,
+      });
+      cur = nextPlayableYmd(addDaysYmd(cur, 1), vLeagueGradeTab);
+    }
+
+    // 결승(3판 2선승) 3경기 슬롯 생성
+    for (let game = 1; game <= 3; game += 1) {
+      const suffix = game === 3 ? "(필요 시)" : "";
+      const row = {
+        order: rows.length + 1,
+        event_date: cur,
+        content: `[토너먼트][${leagueLabel}] 결승 ${game}차전(3판 2선승)${suffix}: 결승전`,
+      };
+      cur = nextPlayableYmd(addDaysYmd(cur, 1), vLeagueGradeTab);
+      rows.push(row);
+    }
+
+    setVLeagueTournamentDraft(rows);
+    setMainMsg("토너먼트 일정(준결승 단판 + 결승 3판2선승) 초안을 만들었습니다.");
+  }, [
+    isVLeagueAdmin,
+    getComputedStandingsByLeague,
+    vLeagueGradeTab,
+    vLeagueTournamentStartDate,
+    nextPlayableYmd,
+    addDaysYmd,
+    setMainMsg,
+  ]);
+
+  const handleSaveVLeagueTournamentEvents = useCallback(async () => {
+    if (!isVLeagueAdmin) {
+      setMainMsg("대진표 생성/수정은 관리자만 가능합니다.");
+      return;
+    }
+    const rows = vLeagueTournamentDraft || [];
+    if (rows.length === 0) {
+      setMainMsg("저장할 토너먼트 일정 초안이 없습니다.");
+      return;
+    }
+    const vClubIds = getVLeagueClubIds();
+    if (vClubIds.length === 0) {
+      setMainMsg("새샘 V리그 club_id를 찾지 못했습니다.");
+      return;
+    }
+    const marker = `[토너먼트][${getVLeagueLabel(vLeagueGradeTab)}]`;
+    setVLeagueTournamentSaving(true);
+    try {
+      // 같은 리그 토너먼트 일정은 교체 저장
+      const { data: existing } = await supabase
+        .from("club_events")
+        .select("id")
+        .in("club_id", vClubIds)
+        .ilike("content", `%${marker}%`);
+      const ids = (existing || []).map((r) => r.id).filter(Boolean);
+      if (ids.length > 0) {
+        const { error: delErr } = await supabase
+          .from("club_events")
+          .delete()
+          .in("id", ids);
+        if (delErr) {
+          setMainMsg(`기존 토너먼트 일정 삭제 실패: ${delErr.message}`);
+          return;
+        }
+      }
+
+      const payload = rows.map((r) => ({
+        club_id: vClubIds[0],
+        event_date: r.event_date,
+        content: r.content,
+        created_by: currentUser?.name || null,
+      }));
+      const { error } = await supabase.from("club_events").insert(payload);
+      if (error) {
+        setMainMsg(`토너먼트 일정 저장 실패: ${error.message}`);
+        return;
+      }
+      setMainMsg("토너먼트 일정이 저장되었습니다.");
+      setVLeagueTournamentDraft([]);
+      await loadVLeagueTournamentEvents(vClubIds, vLeagueGradeTab);
+      await loadEventsForMonth(vClubIds, calendarMonth);
+    } finally {
+      setVLeagueTournamentSaving(false);
+    }
+  }, [
+    isVLeagueAdmin,
+    vLeagueTournamentDraft,
+    getVLeagueClubIds,
+    vLeagueGradeTab,
+    currentUser?.name,
+    loadVLeagueTournamentEvents,
+    loadEventsForMonth,
+    calendarMonth,
+  ]);
 
   const myVLeagueClassRow = useMemo(() => {
     if (currentUser?.role !== "student" || !myStudentClassName) return null;
@@ -3787,7 +4473,13 @@ function App() {
 
   const handleSelectClub = async (name) => {
     setSelectedClubName(name);
-    setShowVLeagueHomeStandingsPopup(isVLeagueClub(name));
+    setShowVLeagueHomeStandingsPopup(false);
+    if (isVLeagueClub(name)) {
+      await loadHomeVLeagueTournamentEvents();
+      setShowVLeagueHomeTournamentPopup(true);
+    } else {
+      setShowVLeagueHomeTournamentPopup(false);
+    }
     setApplications([]);
     setMainMsg("");
     if (page.type !== "home") setPage({ type: "home", clubName: null });
@@ -3886,6 +4578,7 @@ function App() {
   const handleEnterClub = async (clubName) => {
     setMainMsg("");
     setShowVLeagueHomeStandingsPopup(false);
+    setShowVLeagueHomeTournamentPopup(false);
     const club = getClubByName(clubName);
     if (!club) return;
 
@@ -3922,6 +4615,7 @@ function App() {
     setApplications([]);
     setMainMsg("");
     setShowVLeagueHomeStandingsPopup(false);
+    setShowVLeagueHomeTournamentPopup(false);
     const club = getClubByName(clubName);
     setPage({ type: "clubMain", clubName });
     setClubTab("schedule");
@@ -4559,6 +5253,164 @@ function App() {
                                 </div>
                               </div>
                             )}
+                            {showVLeagueHomeTournamentPopup && (
+                              <div
+                                className="vleague-home-standings-overlay"
+                                role="dialog"
+                                aria-modal="true"
+                                aria-label="새샘 V리그 토너먼트 진행표"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  closeHomeTournamentPopupToStandings();
+                                }}
+                              >
+                                <div
+                                  className="vleague-home-standings-modal vleague-home-tournament-modal"
+                                  onClick={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                  <div className="vleague-home-standings-head">
+                                    <div className="vleague-section-title">토너먼트 진행표</div>
+                                  </div>
+                                  <div className="vleague-grade-tabs">
+                                    <button
+                                      type="button"
+                                      className={
+                                        "vleague-grade-tab vleague-grade-tab--malgeun" +
+                                        (vLeagueGradeTab === "malgeun" ? " active" : "")
+                                      }
+                                      onClick={() => setVLeagueGradeTab("malgeun")}
+                                    >
+                                      맑은샘 리그
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={
+                                        "vleague-grade-tab vleague-grade-tab--goun" +
+                                        (vLeagueGradeTab === "goun" ? " active" : "")
+                                      }
+                                      onClick={() => setVLeagueGradeTab("goun")}
+                                    >
+                                      고운샘 리그
+                                    </button>
+                                  </div>
+                                  {homeVLeagueTournamentLoading ? (
+                                    <div className="cal-loading">불러오는 중...</div>
+                                  ) : !homeTournamentBracketRows.hasAny ? (
+                                    <div className="activity-empty">
+                                      저장된 토너먼트 일정이 없습니다.
+                                    </div>
+                                  ) : (
+                                    (() => {
+                                      const [s1a, s1b] = String(
+                                        homeTournamentBracketRows.semi1 || ""
+                                      )
+                                        .split(" vs ")
+                                        .map((s) => String(s || "").trim());
+                                      const [s2a, s2b] = String(
+                                        homeTournamentBracketRows.semi2 || ""
+                                      )
+                                        .split(" vs ")
+                                        .map((s) => String(s || "").trim());
+                                      const winners = homeTournamentBracketRows.winners || {};
+                                      const losers = homeTournamentBracketRows.losers || {};
+                                      const boxClass = (slot, extra) => {
+                                        let cls = "vleague-bracket-box";
+                                        if (extra) cls += ` ${extra}`;
+                                        if (winners[slot]) cls += " vleague-bracket-box--winner";
+                                        if (losers[slot]) cls += " vleague-bracket-box--loser";
+                                        if (bracketSparkSlot === slot) {
+                                          cls += " vleague-bracket-box--spark";
+                                        }
+                                        return cls;
+                                      };
+                                      const finalClass =
+                                        "vleague-bracket-box vleague-bracket-box--final" +
+                                        (winners.final ? " vleague-bracket-box--winner" : "") +
+                                        (bracketSparkSlot === "final"
+                                          ? " vleague-bracket-box--spark"
+                                          : "");
+                                      return (
+                                        <div className="vleague-bracket">
+                                          <div className={finalClass}>
+                                            {homeTournamentBracketRows.final}
+                                          </div>
+                                          <svg
+                                            className="vleague-bracket-wires"
+                                            viewBox="0 0 100 44"
+                                            preserveAspectRatio="none"
+                                            aria-hidden
+                                          >
+                                            <path
+                                              className="vleague-bracket-wires-base"
+                                              d={BRACKET_WIRE_BASE}
+                                              fill="none"
+                                              stroke="currentColor"
+                                              strokeWidth="2"
+                                              vectorEffect="non-scaling-stroke"
+                                              strokeLinejoin="miter"
+                                              strokeLinecap="square"
+                                            />
+                                            {Object.entries(BRACKET_ADVANCE_PATHS).map(
+                                              ([slot, pathD]) =>
+                                                winners[slot] ? (
+                                                  <path
+                                                    key={`advance-${slot}`}
+                                                    className={
+                                                      "vleague-bracket-wires-advance" +
+                                                      (bracketSparkSlot === slot
+                                                        ? " vleague-bracket-wires-spark"
+                                                        : "")
+                                                    }
+                                                    d={pathD}
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    strokeWidth="2.5"
+                                                    vectorEffect="non-scaling-stroke"
+                                                    strokeLinejoin="miter"
+                                                    strokeLinecap="square"
+                                                  />
+                                                ) : null
+                                            )}
+                                          </svg>
+                                          <div className="vleague-bracket-teams">
+                                            <div className="vleague-bracket-pair">
+                                              <BracketTeamBox
+                                                label={s1a || homeTournamentBracketRows.semi1}
+                                                className={boxClass("s1a")}
+                                              />
+                                              <BracketTeamBox
+                                                label={s1b}
+                                                className={boxClass("s1b")}
+                                              />
+                                            </div>
+                                            <div className="vleague-bracket-pair">
+                                              <BracketTeamBox
+                                                label={s2a || homeTournamentBracketRows.semi2}
+                                                className={boxClass("s2a")}
+                                              />
+                                              <BracketTeamBox
+                                                label={s2b}
+                                                className={boxClass("s2b")}
+                                              />
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })()
+                                  )}
+                                  <div className="vleague-home-standings-actions">
+                                    <button
+                                      type="button"
+                                      className="vleague-home-standings-close"
+                                      onClick={closeHomeTournamentPopupToStandings}
+                                    >
+                                      닫기
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                             <div className="sport-vleague-board-head">
                               <span className="sport-vleague-board-head-title">
                                 오늘 경기
@@ -4988,6 +5840,16 @@ function App() {
                       }}
                     >
                       순위표
+                    </button>
+                    <button
+                      type="button"
+                      className={clubTab === "vTournament" ? "club-tab active" : "club-tab"}
+                      onClick={() => {
+                        setMainMsg("");
+                        setClubTab("vTournament");
+                      }}
+                    >
+                      토너먼트 일정 생성
                     </button>
                     {isVLeagueAdmin && (
                       <>
@@ -6334,6 +7196,262 @@ function App() {
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {clubTab === "vTournament" && isVLeagueClub(page.clubName) && (
+                <div className="club-page-body">
+                  <div className="vleague-section-head">
+                    <div className="vleague-section-title">토너먼트 일정 생성</div>
+                    <p className="vleague-section-desc">
+                      리그 순위 1~4위를 기준으로 준결승 2경기(단판), 결승 3경기
+                      (3판 2선승)를 생성합니다.
+                    </p>
+                  </div>
+
+                  <div className="vleague-grade-tabs">
+                    <button
+                      type="button"
+                      className={
+                        "vleague-grade-tab vleague-grade-tab--malgeun" +
+                        (vLeagueGradeTab === "malgeun" ? " active" : "")
+                      }
+                      onClick={() => setVLeagueGradeTab("malgeun")}
+                    >
+                      맑은샘 리그
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        "vleague-grade-tab vleague-grade-tab--goun" +
+                        (vLeagueGradeTab === "goun" ? " active" : "")
+                      }
+                      onClick={() => setVLeagueGradeTab("goun")}
+                    >
+                      고운샘 리그
+                    </button>
+                  </div>
+
+                  {isVLeagueAdmin ? (
+                    <div className="vleague-matches-controls">
+                      <div className="vleague-matches-control-row">
+                        <label className="vleague-field">
+                          <span>준결승 시작 날짜</span>
+                          <input
+                            type="date"
+                            value={vLeagueTournamentStartDate}
+                            onChange={(e) => setVLeagueTournamentStartDate(e.target.value)}
+                          />
+                        </label>
+                      </div>
+                      <div className="vleague-matches-action-row">
+                        <button
+                          type="button"
+                          className="vleague-primary"
+                          onClick={handleGenerateVLeagueTournamentDraft}
+                        >
+                          토너먼트 일정 생성
+                        </button>
+                        <button
+                          type="button"
+                          className="vleague-ghost"
+                          disabled={vLeagueTournamentSaving}
+                          onClick={handleSaveVLeagueTournamentEvents}
+                        >
+                          {vLeagueTournamentSaving ? "저장 중..." : "일정에 저장"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="vleague-matches-viewer-note">
+                      대진표 생성/수정은 관리자만 가능합니다.
+                    </div>
+                  )}
+
+                  {vLeagueTournamentDraft.length > 0 && (
+                    <div className="vleague-tournament-block">
+                      <div className="vleague-tournament-title">생성된 일정 초안</div>
+                      <div className="vleague-match-list">
+                        {vLeagueTournamentDraft.map((row) => (
+                          <div
+                            key={`draft-${row.order}`}
+                            className="vleague-match-row"
+                          >
+                            <div className="vleague-match-left">
+                              <div className="vleague-match-title">{row.content}</div>
+                              <div className="vleague-match-meta">{row.event_date}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="vleague-tournament-block">
+                    <div className="vleague-tournament-title">저장된 토너먼트 일정</div>
+                    {vLeagueTournamentLoading ? (
+                      <div className="cal-loading">불러오는 중...</div>
+                    ) : vLeagueTournamentEvents.length === 0 ? (
+                      <div className="activity-empty">저장된 토너먼트 일정이 없습니다.</div>
+                    ) : (
+                      <div className="vleague-match-list">
+                        {vLeagueTournamentEvents.map((row) => {
+                          const teams = parseTournamentTeams(row.content);
+                          const saved = parseTournamentSavedScore(row.content) || {};
+                          const draft = vLeagueTournamentResultDrafts[row.id] || {};
+                          const homeInput = draft.home ?? saved.home ?? "";
+                          const awayInput = draft.away ?? saved.away ?? "";
+                          const winInput = draft.winScore ?? saved.winScore ?? "";
+                          const classA = teams ? getTeamClassShortLabel(teams.home) : "";
+                          const classB = teams ? getTeamClassShortLabel(teams.away) : "";
+                          const homeNum = Number(homeInput);
+                          const awayNum = Number(awayInput);
+                          const winNum = Number(winInput);
+                          let winnerLabel = "";
+                          if (teams && Number.isFinite(winNum) && winNum > 0) {
+                            if (
+                              Number.isFinite(homeNum) &&
+                              homeNum === winNum &&
+                              awayNum !== winNum
+                            ) {
+                              winnerLabel = `${classA} 승`;
+                            } else if (
+                              Number.isFinite(awayNum) &&
+                              awayNum === winNum &&
+                              homeNum !== winNum
+                            ) {
+                              winnerLabel = `${classB} 승`;
+                            }
+                          }
+                          const savedScorePart =
+                            saved.home != null && saved.away != null
+                              ? saved.winScore
+                                ? ` (승리${saved.winScore}점 · ${saved.home}:${saved.away})`
+                                : ` (${saved.home}:${saved.away})`
+                              : "";
+                          return (
+                            <div key={row.id} className="vleague-match-row">
+                              <div className="vleague-match-left">
+                                <div className="vleague-match-title">
+                                  {formatTeamForResultInput(teams?.home || "")}{" "}
+                                  <span className="vleague-vs">vs</span>{" "}
+                                  {formatTeamForResultInput(teams?.away || "")}
+                                  {savedScorePart}
+                                </div>
+                                <div className="vleague-match-meta">
+                                  {row.event_date}
+                                  {parseTournamentMatchInfo(row.content).gameNo
+                                    ? ` · ${parseTournamentMatchInfo(row.content).ruleLabel} ${parseTournamentMatchInfo(row.content).gameNo}차전`
+                                    : ` · ${parseTournamentMatchInfo(row.content).ruleLabel}`}
+                                </div>
+                              </div>
+                              {isVLeagueAdmin && teams && (
+                                <div className="vleague-match-actions">
+                                  <div className="vleague-result-inputs">
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      inputMode="numeric"
+                                      className="vleague-score-input vleague-win-input"
+                                      value={winInput}
+                                      onChange={(e) =>
+                                        setVLeagueTournamentResultDrafts((prev) => ({
+                                          ...prev,
+                                          [row.id]: {
+                                            home: prev[row.id]?.home ?? saved.home ?? "",
+                                            away: prev[row.id]?.away ?? saved.away ?? "",
+                                            winScore: e.target.value,
+                                          },
+                                        }))
+                                      }
+                                      placeholder="승리점수"
+                                      aria-label="승리 점수"
+                                    />
+                                    <span className="vleague-tournament-class-label">
+                                      {classA}
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      inputMode="numeric"
+                                      className="vleague-score-input"
+                                      value={homeInput}
+                                      onChange={(e) =>
+                                        setVLeagueTournamentResultDrafts((prev) => ({
+                                          ...prev,
+                                          [row.id]: {
+                                            home: e.target.value,
+                                            away: prev[row.id]?.away ?? saved.away ?? "",
+                                            winScore: prev[row.id]?.winScore ?? saved.winScore ?? "",
+                                          },
+                                        }))
+                                      }
+                                      aria-label={`${classA} 점수`}
+                                    />
+                                    <span className="vleague-score-sep">:</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      inputMode="numeric"
+                                      className="vleague-score-input"
+                                      value={awayInput}
+                                      onChange={(e) =>
+                                        setVLeagueTournamentResultDrafts((prev) => ({
+                                          ...prev,
+                                          [row.id]: {
+                                            home: prev[row.id]?.home ?? saved.home ?? "",
+                                            away: e.target.value,
+                                            winScore: prev[row.id]?.winScore ?? saved.winScore ?? "",
+                                          },
+                                        }))
+                                      }
+                                      aria-label={`${classB} 점수`}
+                                    />
+                                    <span className="vleague-tournament-class-label">
+                                      {classB}
+                                    </span>
+                                    <div className="vleague-winner-live">
+                                      {winnerLabel || "-"}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="vleague-result-save"
+                                      disabled={vLeagueTournamentResultSavingId === row.id}
+                                      onClick={() => handleSaveVLeagueTournamentResult(row)}
+                                    >
+                                      {vLeagueTournamentResultSavingId === row.id
+                                        ? "저장 중..."
+                                        : "결과 저장"}
+                                    </button>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="vleague-ghost"
+                                    disabled={vLeagueTournamentPostponingId === row.id}
+                                    onClick={() => handlePostponeVLeagueTournamentEvent(row)}
+                                  >
+                                    {vLeagueTournamentPostponingId === row.id
+                                      ? "이동 중..."
+                                      : "뒤로 미루기"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="vleague-ghost"
+                                    disabled={vLeagueTournamentDeletingId === row.id}
+                                    onClick={() => handleDeleteVLeagueTournamentEvent(row)}
+                                  >
+                                    {vLeagueTournamentDeletingId === row.id
+                                      ? "삭제 중..."
+                                      : "일정 삭제"}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
