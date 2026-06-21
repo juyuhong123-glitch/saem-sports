@@ -204,7 +204,7 @@ const KOREA_HOLIDAYS_2026 = new Set([
 ]);
 const AUTO_LOGOUT_IDLE_MS = 3 * 60 * 1000;
 
-/** 메인 종목 카드·V리그 오늘 경기: 전광판식 가로 흐름 (이중 문구 + rAF 픽셀 이동) */
+/** 메인 종목 카드·V리그 오늘 경기: 전광판식 가로 흐름 (이중 문구 + CSS 이동) */
 function HomeHorizontalTicker({
   text,
   title,
@@ -217,8 +217,7 @@ function HomeHorizontalTicker({
 }) {
   const t = String(text || "").trim();
   const rootRef = useRef(null);
-  const trackRef = useRef(null);
-  const distRef = useRef(0);
+  const [marqueeDurSec, setMarqueeDurSec] = useState(minDurSec);
   const durSec = Math.min(
     maxDurSec,
     Math.max(minDurSec, Math.round(t.length * durPerChar))
@@ -230,64 +229,43 @@ function HomeHorizontalTicker({
       : !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   useLayoutEffect(() => {
-    const track = trackRef.current;
-    if (!motionOk || !t || !track) return undefined;
-    const syncDist = () => {
-      const w = track.scrollWidth;
-      distRef.current = w > 0 ? w / 2 : 0;
-    };
-    syncDist();
-    const ro = new ResizeObserver(syncDist);
-    ro.observe(track);
-    return () => ro.disconnect();
-  }, [t, motionOk]);
-
-  useEffect(() => {
-    if (!motionOk || !t) return undefined;
-    const track = trackRef.current;
-    if (!track) return undefined;
-    const start = performance.now();
-    const rafRef = { current: 0 };
-    let cancelled = false;
-
-    const tick = (now) => {
-      if (cancelled) return;
-      const w = track.scrollWidth;
-      const d = w > 0 ? w / 2 : 0;
-      if (d < 2) {
-        rafRef.current = requestAnimationFrame(tick);
-        return;
+    if (!t) return undefined;
+    setMarqueeDurSec(durSec);
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const syncDur = () => {
+      const track = root.querySelector("[data-ticker-track]");
+      const seg = track?.firstElementChild;
+      if (!seg || !track) return;
+      const copyW = seg.scrollWidth || seg.getBoundingClientRect().width || 0;
+      const viewW = root.clientWidth || root.getBoundingClientRect().width || 0;
+      const pxPerSec = 42;
+      if (copyW > 1 && viewW > 1) {
+        setMarqueeDurSec(
+          Math.min(maxDurSec, Math.max(minDurSec, Math.round(copyW / pxPerSec)))
+        );
       }
-      distRef.current = d;
-      const elapsed = ((now - start) / 1000) % durSec;
-      const x = (elapsed / durSec) * d;
-      track.style.transform = `translate3d(${-x}px,0,0)`;
-      rafRef.current = requestAnimationFrame(tick);
     };
-
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(rafRef.current);
-      track.style.transform = "";
-    };
-  }, [motionOk, durSec, t]);
+    syncDur();
+    const ro = new ResizeObserver(syncDur);
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, [t, durSec, minDurSec, maxDurSec]);
 
   if (!t) return null;
 
   const tip = title ?? t;
-
-  if (!motionOk) {
-    return (
-      <span ref={rootRef} className={rootClassName} title={tip}>
-        <span className={segClassName}>{t}</span>
-      </span>
-    );
-  }
+  const trackClass = motionOk
+    ? `${trackClassName} sport-vleague-board-head-item-marquee-track--active`
+    : trackClassName;
 
   return (
     <span ref={rootRef} className={rootClassName} title={tip}>
-      <span ref={trackRef} className={trackClassName}>
+      <span
+        data-ticker-track
+        className={trackClass}
+        style={motionOk ? { "--marquee-dur": `${marqueeDurSec}s` } : undefined}
+      >
         <span className={segClassName}>{t}</span>
         <span className={segClassName} aria-hidden>
           {t}
@@ -306,6 +284,35 @@ const BRACKET_ADVANCE_PATHS = {
   s2a: "M65 44V22H77V11H50V0",
   s2b: "M89 44V22H77V11H50V0",
 };
+
+function buildBracketDownWireBase(semi1Win, semi2Win) {
+  const hubY = 12;
+  const endY = 24;
+  const center = 50;
+  const has1 = semi1Win === "home" || semi1Win === "away";
+  const has2 = semi2Win === "home" || semi2Win === "away";
+  const x1 = has1 ? (semi1Win === "home" ? 35 : 11) : 23;
+  const x2 = has2 ? (semi2Win === "home" ? 89 : 65) : 77;
+  return `M${x1} 0V${hubY}H${center}V${endY}M${x2} 0V${hubY}H${center}V${endY}`;
+}
+
+function getBracketBronzeFeedAdvancePaths(semi1Win, semi2Win) {
+  const paths = {};
+  const hubY = 12;
+  const endY = 24;
+  const center = 50;
+  if (semi1Win === "home") {
+    paths.s1b = `M35 0V${hubY}H${center}V${endY}`;
+  } else if (semi1Win === "away") {
+    paths.s1a = `M11 0V${hubY}H${center}V${endY}`;
+  }
+  if (semi2Win === "home") {
+    paths.s2b = `M89 0V${hubY}H${center}V${endY}`;
+  } else if (semi2Win === "away") {
+    paths.s2a = `M65 0V${hubY}H${center}V${endY}`;
+  }
+  return paths;
+}
 
 function getTournamentWinnerSideFromContent(content) {
   const raw = String(content || "");
@@ -329,12 +336,83 @@ function getTournamentWinnerSideFromContent(content) {
   return homeScore > awayScore ? "home" : "away";
 }
 
+function stripTournamentResultSuffix(content) {
+  return String(content || "")
+    .replace(
+      /\s*\|\s*승리점수\s*\d+\s*\|\s*결과\s*\d+\s*:\s*\d+(\s*\|\s*승리팀\s*[^|]+)?\s*$/g,
+      ""
+    )
+    .replace(/\s*\|\s*결과\s*\d+\s*:\s*\d+(\s*\|\s*승리팀\s*[^|]+)?\s*$/g, "")
+    .trim();
+}
+
+function parseTournamentTeamsFromContent(content) {
+  const base = stripTournamentResultSuffix(content);
+  const rhs = String(base).split(":").slice(1).join(":").trim();
+  if (!rhs.includes(" vs ")) return null;
+  const [home, away] = rhs.split(" vs ").map((s) => String(s || "").trim());
+  if (!home || !away) return null;
+  return { home, away };
+}
+
+function getTournamentWinnerLoserFromContent(content) {
+  const teams = parseTournamentTeamsFromContent(content);
+  const side = getTournamentWinnerSideFromContent(content);
+  if (!teams || !side) return null;
+  return {
+    winner: side === "home" ? teams.home : teams.away,
+    loser: side === "home" ? teams.away : teams.home,
+  };
+}
+
+function getTournamentPhaseLabel(content) {
+  const c = String(content || "");
+  if (c.includes("준결승 1")) return "준결승";
+  if (c.includes("준결승 2")) return "준결승";
+  if (c.includes("준결승")) return "준결승";
+  if (c.includes("3·4위전")) return "3·4위전";
+  const finalM = c.match(/결승\s*(\d+)\s*차전/);
+  if (finalM) {
+    return Number(finalM[1]) === 1 ? "결승전" : `결승 ${finalM[1]}차전`;
+  }
+  if (c.includes("결승")) return "결승전";
+  return "토너먼트";
+}
+
+function formatTournamentTeamForScoreboard(teamLabel) {
+  const parsed = parseBracketTeamLabel(teamLabel);
+  if (!parsed) return String(teamLabel || "").trim() || "팀";
+  if (parsed.single) return parsed.single;
+  if (parsed.cls) return `${parsed.name}${parsed.cls}`;
+  return parsed.name || parsed.rank || String(teamLabel || "").trim();
+}
+
+function formatTournamentEventForScoreboard(content, leagueLabel) {
+  const phase = getTournamentPhaseLabel(content);
+  const teams = parseTournamentTeamsFromContent(content);
+  if (!teams) return `[${leagueLabel}] (${phase})`;
+  const home = formatTournamentTeamForScoreboard(teams.home);
+  const away = formatTournamentTeamForScoreboard(teams.away);
+  return `[${leagueLabel}] (${phase}) ${home} VS ${away}`;
+}
+
+function getTournamentLeagueKeyFromContent(content) {
+  const c = String(content || "");
+  if (c.includes("[맑은샘]")) return "malgeun";
+  if (c.includes("[고운샘]")) return "goun";
+  return "";
+}
+
 function getBracketSparkSlotFromEvent(content, winnerSide) {
   const c = String(content || "");
   if (!winnerSide) return null;
   if (c.includes("준결승 1")) return winnerSide === "home" ? "s1a" : "s1b";
   if (c.includes("준결승 2")) return winnerSide === "home" ? "s2a" : "s2b";
-  if (c.includes("결승")) return "final";
+  if (c.includes("3·4위전")) return winnerSide === "home" ? "b1" : "b2";
+  if (c.includes("결승")) {
+    if (!winnerSide) return null;
+    return winnerSide === "home" ? "f1" : "f2";
+  }
   return null;
 }
 
@@ -387,6 +465,9 @@ function parseTournamentMatchInfo(content) {
       "이번 경기(세트) 점수를 입력하세요. 점수가 더 높은 팀이 이 세트를 승리합니다.";
     const gm = c.match(/결승\s*(\d+)\s*차전/);
     gameNo = gm ? Number(gm[1]) : null;
+  } else if (c.includes("3·4위전")) {
+    ruleLabel = "단판";
+    ruleHint = "3·4위를 가리는 경기입니다. 각 팀 점수를 입력하세요.";
   } else if (c.includes("단판")) {
     ruleLabel = "단판";
     ruleHint = "각 팀 점수를 입력하세요. 점수가 더 높은 팀이 승리합니다.";
@@ -396,21 +477,66 @@ function parseTournamentMatchInfo(content) {
   return { ruleLabel, ruleHint, gameNo };
 }
 
-function BracketTeamBox({ label, className }) {
+function BracketTeamContent({ label, hideRank = false }) {
   const parsed = parseBracketTeamLabel(label);
-  if (!parsed) {
-    return <div className={className}>-</div>;
-  }
-  if (parsed.single) {
-    return <div className={className}>{parsed.single}</div>;
-  }
+  if (!parsed) return <>-</>;
+  if (parsed.single) return <>{parsed.single}</>;
   return (
-    <div className={className}>
-      <span className="vleague-bracket-box-rank">{parsed.rank}</span>
+    <>
+      {!hideRank ? (
+        <span className="vleague-bracket-box-rank">{parsed.rank}</span>
+      ) : null}
       <span className="vleague-bracket-box-name">{parsed.name}</span>
       {parsed.cls ? (
         <span className="vleague-bracket-box-class">{parsed.cls}</span>
       ) : null}
+    </>
+  );
+}
+
+function BracketTeamBox({ label, className, hideRank = false }) {
+  const parsed = parseBracketTeamLabel(label);
+  if (!parsed) {
+    return <div className={className}>-</div>;
+  }
+  return (
+    <div className={className}>
+      <BracketTeamContent label={label} hideRank={hideRank} />
+    </div>
+  );
+}
+
+function BracketMatchBox({
+  homeLabel,
+  awayLabel,
+  homeSlot,
+  awaySlot,
+  winners,
+  losers,
+  sparkSlot,
+  className,
+}) {
+  const sideClass = (slot) => {
+    let cls = "vleague-bracket-match-side";
+    if (winners?.[slot]) cls += " vleague-bracket-match-side--winner";
+    if (losers?.[slot]) cls += " vleague-bracket-match-side--loser";
+    if (sparkSlot === slot) cls += " vleague-bracket-match-side--spark";
+    return cls;
+  };
+  let boxCls = "vleague-bracket-match-box";
+  if (className) boxCls += ` ${className}`;
+  if (sparkSlot === homeSlot || sparkSlot === awaySlot) {
+    boxCls += " vleague-bracket-match-box--spark";
+  }
+  return (
+    <div className={boxCls}>
+      <div className={sideClass(homeSlot)}>
+        <BracketTeamContent label={homeLabel} hideRank />
+      </div>
+      <span className="vleague-bracket-vs">VS</span>
+      <div className={sideClass(awaySlot)}>
+        <BracketTeamContent label={awayLabel} hideRank />
+      </div>
     </div>
   );
 }
@@ -472,6 +598,8 @@ function App() {
       return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
     }
   );
+  const [vLeagueTournamentBronzeDate, setVLeagueTournamentBronzeDate] =
+    useState("2026-06-22");
   const [vLeagueTournamentDraft, setVLeagueTournamentDraft] = useState([]);
   const [vLeagueTournamentSaving, setVLeagueTournamentSaving] = useState(false);
   const [vLeagueTournamentEvents, setVLeagueTournamentEvents] = useState([]);
@@ -522,6 +650,7 @@ function App() {
     malgeun: null,
     goun: null,
   });
+  const loadVLeagueTodayMatchTextRef = useRef(async () => {});
   const [vLeagueReferees, setVLeagueReferees] = useState([]);
   const [vLeagueRefereeAssignments, setVLeagueRefereeAssignments] = useState([]);
   const [vLeagueRefereeLoading, setVLeagueRefereeLoading] = useState(false);
@@ -1581,24 +1710,10 @@ function App() {
     [setMainMsg]
   );
 
-  const stripTournamentResultSuffix = useCallback((content) => {
-    return String(content || "")
-      .replace(
-        /\s*\|\s*승리점수\s*\d+\s*\|\s*결과\s*\d+\s*:\s*\d+(\s*\|\s*승리팀\s*[^|]+)?\s*$/g,
-        ""
-      )
-      .replace(/\s*\|\s*결과\s*\d+\s*:\s*\d+(\s*\|\s*승리팀\s*[^|]+)?\s*$/g, "")
-      .trim();
-  }, []);
-
-  const parseTournamentTeams = useCallback((content) => {
-    const base = stripTournamentResultSuffix(content);
-    const rhs = String(base).split(":").slice(1).join(":").trim();
-    if (!rhs.includes(" vs ")) return null;
-    const [home, away] = rhs.split(" vs ").map((s) => String(s || "").trim());
-    if (!home || !away) return null;
-    return { home, away };
-  }, [stripTournamentResultSuffix]);
+  const parseTournamentTeams = useCallback(
+    (content) => parseTournamentTeamsFromContent(content),
+    []
+  );
 
   const parseTournamentSavedScore = useCallback((content) => {
     const c = String(content || "");
@@ -1625,7 +1740,7 @@ function App() {
       }
       return `${base} | 승리점수 ${winScore} | 결과 ${homeScore}:${awayScore}${winnerText}`.trim();
     },
-    [stripTournamentResultSuffix, parseTournamentTeams]
+    [parseTournamentTeams]
   );
 
   const handleSaveVLeagueTournamentResult = useCallback(
@@ -1695,6 +1810,7 @@ function App() {
           return next;
         });
         setMainMsg("토너먼트 경기 결과를 저장했습니다.");
+        await loadVLeagueTodayMatchTextRef.current();
       } finally {
         setVLeagueTournamentResultSavingId(null);
       }
@@ -1936,7 +2052,7 @@ function App() {
 
   useEffect(() => {
     if (page.type !== "clubMain" || clubTab !== "vTournament") return;
-    if (!isVLeagueClub(page.clubName)) return;
+    if (!isVLeagueClub(page.clubName) || !isVLeagueAdmin) return;
     const vClubIds = getVLeagueClubIds();
     if (vClubIds.length === 0) return;
     loadVLeagueTournamentEvents(vClubIds, vLeagueGradeTab);
@@ -1946,6 +2062,7 @@ function App() {
     page.clubName,
     clubs,
     vLeagueGradeTab,
+    isVLeagueAdmin,
     loadVLeagueTournamentEvents,
     getVLeagueClubIds,
   ]);
@@ -2255,27 +2372,65 @@ function App() {
     };
     const semi1Ev = findBy("준결승 1");
     const semi2Ev = findBy("준결승 2");
+    const bronzeEv = findBy("3·4위전");
     const semi1Win = getTournamentWinnerSideFromContent(semi1Ev?.content);
     const semi2Win = getTournamentWinnerSideFromContent(semi2Ev?.content);
     const finalEv = findBy("결승 1차전") || findBy("결승");
     const finalWin = getTournamentWinnerSideFromContent(finalEv?.content);
+    const bronzeWin = getTournamentWinnerSideFromContent(bronzeEv?.content);
+    const semi1Str = toTeams(semi1Ev, "-");
+    const semi2Str = toTeams(semi2Ev, "-");
+    const [s1aRaw, s1bRaw] = String(semi1Str).split(" vs ").map((s) => String(s || "").trim());
+    const [s2aRaw, s2bRaw] = String(semi2Str).split(" vs ").map((s) => String(s || "").trim());
+    const bronzeTeams = bronzeEv
+      ? parseTournamentTeamsFromContent(bronzeEv.content)
+      : null;
+    let bronzeB1 = bronzeTeams?.home || "";
+    let bronzeB2 = bronzeTeams?.away || "";
+    if (!bronzeB1 && semi1Win === "home") bronzeB1 = s1bRaw;
+    else if (!bronzeB1 && semi1Win === "away") bronzeB1 = s1aRaw;
+    if (!bronzeB2 && semi2Win === "home") bronzeB2 = s2bRaw;
+    else if (!bronzeB2 && semi2Win === "away") bronzeB2 = s2aRaw;
+    const finalTeams = finalEv
+      ? parseTournamentTeamsFromContent(finalEv.content)
+      : null;
+    let finalF1 = finalTeams?.home || "";
+    let finalF2 = finalTeams?.away || "";
+    if (!finalF1 && semi1Win === "home") finalF1 = s1aRaw;
+    else if (!finalF1 && semi1Win === "away") finalF1 = s1bRaw;
+    if (!finalF2 && semi2Win === "home") finalF2 = s2aRaw;
+    else if (!finalF2 && semi2Win === "away") finalF2 = s2bRaw;
     return {
-      semi1: toTeams(semi1Ev, "-"),
-      semi2: toTeams(semi2Ev, "-"),
+      semi1: semi1Str,
+      semi2: semi2Str,
       final: toFinalLabel(finalEv),
+      finalF1: finalF1 || "-",
+      finalF2: finalF2 || "-",
+      bronzeB1: bronzeB1 || "-",
+      bronzeB2: bronzeB2 || "-",
+      bronzeScheduled: Boolean(bronzeEv),
+      downWireBase: buildBracketDownWireBase(semi1Win, semi2Win),
+      bronzeFeedPaths: getBracketBronzeFeedAdvancePaths(semi1Win, semi2Win),
       hasAny: list.length > 0,
       winners: {
         s1a: semi1Win === "home",
         s1b: semi1Win === "away",
         s2a: semi2Win === "home",
         s2b: semi2Win === "away",
-        final: Boolean(finalWin),
+        f1: finalWin === "home",
+        f2: finalWin === "away",
+        b1: bronzeWin === "home",
+        b2: bronzeWin === "away",
       },
       losers: {
         s1a: semi1Win === "away",
         s1b: semi1Win === "home",
         s2a: semi2Win === "away",
         s2b: semi2Win === "home",
+        f1: finalWin === "away",
+        f2: finalWin === "home",
+        b1: bronzeWin === "away",
+        b2: bronzeWin === "home",
       },
     };
   }, [homeVLeagueTournamentEvents, vLeagueGradeTab, formatEventContentForDisplay, parseTournamentTeams]);
@@ -2285,6 +2440,69 @@ function App() {
       setMainMsg("대진표 생성/수정은 관리자만 가능합니다.");
       return;
     }
+    const leagueLabel = getVLeagueLabel(vLeagueGradeTab);
+    const marker = `[토너먼트][${leagueLabel}]`;
+    const existing = (vLeagueTournamentEvents || [])
+      .filter((ev) => String(ev.content || "").includes(marker))
+      .sort((a, b) =>
+        String(a.event_date || "").localeCompare(String(b.event_date || ""))
+      );
+    const semi1Ev =
+      existing.find((ev) => String(ev.content || "").includes("준결승 1")) || null;
+    const semi2Ev =
+      existing.find((ev) => String(ev.content || "").includes("준결승 2")) || null;
+    const semi1Result = semi1Ev
+      ? getTournamentWinnerLoserFromContent(semi1Ev.content)
+      : null;
+    const semi2Result = semi2Ev
+      ? getTournamentWinnerLoserFromContent(semi2Ev.content)
+      : null;
+
+    if (semi1Result && semi2Result) {
+      const rows = [];
+      for (const ev of [semi1Ev, semi2Ev]) {
+        rows.push({
+          order: rows.length + 1,
+          event_date: ev.event_date,
+          content: ev.content,
+          existingId: ev.id,
+        });
+      }
+      const bronzeDate = nextPlayableYmd(
+        vLeagueTournamentBronzeDate,
+        vLeagueGradeTab
+      );
+      rows.push({
+        order: rows.length + 1,
+        event_date: bronzeDate,
+        content: `[토너먼트][${leagueLabel}] 3·4위전(단판): ${semi1Result.loser} vs ${semi2Result.loser}`,
+      });
+      const finalMatchup = `${semi1Result.winner} vs ${semi2Result.winner}`;
+      let cur = nextPlayableYmd(addDaysYmd(bronzeDate, 1), vLeagueGradeTab);
+      for (let game = 1; game <= 3; game += 1) {
+        const suffix = game === 3 ? "(필요 시)" : "";
+        rows.push({
+          order: rows.length + 1,
+          event_date: cur,
+          content: `[토너먼트][${leagueLabel}] 결승 ${game}차전(3판 2선승)${suffix}: ${finalMatchup}`,
+        });
+        cur = nextPlayableYmd(addDaysYmd(cur, 1), vLeagueGradeTab);
+      }
+      setVLeagueTournamentDraft(rows);
+      setMainMsg(
+        "준결승 결과를 반영해 3·4위전·결승(팀 확정) 일정 초안을 만들었습니다."
+      );
+      return;
+    }
+
+    if (semi1Ev || semi2Ev) {
+      setVLeagueTournamentDraft([]);
+      setMainMsg(
+        "준결승 2경기 결과가 모두 저장되어야 3·4위전·결승 일정을 생성할 수 있습니다."
+      );
+      return;
+    }
+
     const standings = getComputedStandingsByLeague(vLeagueGradeTab);
     if ((standings || []).length < 4) {
       setMainMsg("토너먼트 일정 생성을 위해 최소 4개 학급 순위가 필요합니다.");
@@ -2293,14 +2511,12 @@ function App() {
     }
     const top4 = standings.slice(0, 4);
     const semiPairs = [
-      { a: top4[0], b: top4[3] }, // 1 vs 4
-      { a: top4[1], b: top4[2] }, // 2 vs 3
+      { a: top4[0], b: top4[3] },
+      { a: top4[1], b: top4[2] },
     ];
     let cur = nextPlayableYmd(vLeagueTournamentStartDate, vLeagueGradeTab);
-    const leagueLabel = getVLeagueLabel(vLeagueGradeTab);
     const rows = [];
 
-    // 준결승(단판) 2경기
     for (let idx = 0; idx < semiPairs.length; idx += 1) {
       const p = semiPairs[idx];
       rows.push({
@@ -2311,25 +2527,17 @@ function App() {
       cur = nextPlayableYmd(addDaysYmd(cur, 1), vLeagueGradeTab);
     }
 
-    // 결승(3판 2선승) 3경기 슬롯 생성
-    for (let game = 1; game <= 3; game += 1) {
-      const suffix = game === 3 ? "(필요 시)" : "";
-      const row = {
-        order: rows.length + 1,
-        event_date: cur,
-        content: `[토너먼트][${leagueLabel}] 결승 ${game}차전(3판 2선승)${suffix}: 결승전`,
-      };
-      cur = nextPlayableYmd(addDaysYmd(cur, 1), vLeagueGradeTab);
-      rows.push(row);
-    }
-
     setVLeagueTournamentDraft(rows);
-    setMainMsg("토너먼트 일정(준결승 단판 + 결승 3판2선승) 초안을 만들었습니다.");
+    setMainMsg(
+      "준결승 2경기 일정 초안을 만들었습니다. 경기 후 결과를 저장하고 다시 생성하면 3·4위전·결승 일정이 채워집니다."
+    );
   }, [
     isVLeagueAdmin,
+    vLeagueTournamentEvents,
     getComputedStandingsByLeague,
     vLeagueGradeTab,
     vLeagueTournamentStartDate,
+    vLeagueTournamentBronzeDate,
     nextPlayableYmd,
     addDaysYmd,
     setMainMsg,
@@ -2353,13 +2561,24 @@ function App() {
     const marker = `[토너먼트][${getVLeagueLabel(vLeagueGradeTab)}]`;
     setVLeagueTournamentSaving(true);
     try {
-      // 같은 리그 토너먼트 일정은 교체 저장
+      const keepIds = new Set(
+        rows.map((r) => r.existingId).filter(Boolean)
+      );
+      const partialSave = keepIds.size > 0;
       const { data: existing } = await supabase
         .from("club_events")
-        .select("id")
+        .select("id, content")
         .in("club_id", vClubIds)
         .ilike("content", `%${marker}%`);
-      const ids = (existing || []).map((r) => r.id).filter(Boolean);
+      const ids = (existing || [])
+        .filter((r) => {
+          if (keepIds.has(r.id)) return false;
+          if (!partialSave) return true;
+          const c = String(r.content || "");
+          return /3·4위전|결승\s*\d+\s*차전/.test(c);
+        })
+        .map((r) => r.id)
+        .filter(Boolean);
       if (ids.length > 0) {
         const { error: delErr } = await supabase
           .from("club_events")
@@ -2371,12 +2590,18 @@ function App() {
         }
       }
 
-      const payload = rows.map((r) => ({
-        club_id: vClubIds[0],
-        event_date: r.event_date,
-        content: r.content,
-        created_by: currentUser?.name || null,
-      }));
+      const payload = rows
+        .filter((r) => !r.existingId)
+        .map((r) => ({
+          club_id: vClubIds[0],
+          event_date: r.event_date,
+          content: r.content,
+          created_by: currentUser?.name || null,
+        }));
+      if (payload.length === 0) {
+        setMainMsg("저장할 새 일정이 없습니다.");
+        return;
+      }
       const { error } = await supabase.from("club_events").insert(payload);
       if (error) {
         setMainMsg(`토너먼트 일정 저장 실패: ${error.message}`);
@@ -2385,6 +2610,8 @@ function App() {
       setMainMsg("토너먼트 일정이 저장되었습니다.");
       setVLeagueTournamentDraft([]);
       await loadVLeagueTournamentEvents(vClubIds, vLeagueGradeTab);
+      await loadHomeVLeagueTournamentEvents();
+      await loadVLeagueTodayMatchTextRef.current();
       await loadEventsForMonth(vClubIds, calendarMonth);
     } finally {
       setVLeagueTournamentSaving(false);
@@ -2396,6 +2623,7 @@ function App() {
     vLeagueGradeTab,
     currentUser?.name,
     loadVLeagueTournamentEvents,
+    loadHomeVLeagueTournamentEvents,
     loadEventsForMonth,
     calendarMonth,
   ]);
@@ -2787,15 +3015,50 @@ function App() {
     }
     const ymdYesterday = addDaysYmd(today, -1);
     const ymdTomorrow = addDaysYmd(today, 1);
-    const { data: matches, error } = await supabase
-      .from("vleague_matches")
-      .select("id, home_class_id, away_class_id, match_date, league")
-      .in("club_id", clubIds)
-      .gte("match_date", ymdYesterday)
-      .lte("match_date", ymdTomorrow)
-      .order("match_date", { ascending: true })
-      .order("match_no", { ascending: true })
-      .limit(300);
+    const isNowInTodayMatchBannerWindow = (matchDateYmd) => {
+      const ymd = String(matchDateYmd || "").slice(0, 10);
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+      if (!m) return false;
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      const d = Number(m[3]);
+      const matchDay = new Date(y, mo - 1, d);
+      const prevDay = new Date(matchDay);
+      prevDay.setDate(prevDay.getDate() - 1);
+      const start = new Date(
+        prevDay.getFullYear(),
+        prevDay.getMonth(),
+        prevDay.getDate(),
+        14,
+        0,
+        0,
+        0
+      );
+      const end = new Date(y, mo - 1, d, 14, 0, 0, 0);
+      const now = new Date();
+      return now >= start && now < end;
+    };
+
+    const [{ data: matches, error }, { data: tournamentEvents }] = await Promise.all([
+      supabase
+        .from("vleague_matches")
+        .select("id, home_class_id, away_class_id, match_date, league")
+        .in("club_id", clubIds)
+        .gte("match_date", ymdYesterday)
+        .lte("match_date", ymdTomorrow)
+        .order("match_date", { ascending: true })
+        .order("match_no", { ascending: true })
+        .limit(300),
+      supabase
+        .from("club_events")
+        .select("id, event_date, content")
+        .in("club_id", clubIds)
+        .ilike("content", "%[토너먼트]%")
+        .gte("event_date", ymdYesterday)
+        .lte("event_date", ymdTomorrow)
+        .order("event_date", { ascending: true })
+        .limit(50),
+    ]);
     if (error) {
       setVLeagueTodayMatches({ malgeun: "", goun: "" });
       setVLeagueTodayMatchIds({ malgeun: null, goun: null });
@@ -2810,7 +3073,17 @@ function App() {
       );
     });
     const sourceMatches = (matches && matches.length > 0 ? matches : fallbackMatches) || [];
-    if (sourceMatches.length === 0) {
+
+    const tournamentByLeague = { malgeun: [], goun: [] };
+    for (const ev of tournamentEvents || []) {
+      if (!isNowInTodayMatchBannerWindow(ev.event_date)) continue;
+      const leagueKey = getTournamentLeagueKeyFromContent(ev.content);
+      if (leagueKey === "malgeun" || leagueKey === "goun") {
+        tournamentByLeague[leagueKey].push(ev);
+      }
+    }
+
+    if (sourceMatches.length === 0 && !tournamentByLeague.malgeun.length && !tournamentByLeague.goun.length) {
       setVLeagueTodayMatches({ malgeun: "", goun: "" });
       setVLeagueTodayMatchIds({ malgeun: null, goun: null });
       return;
@@ -2839,29 +3112,6 @@ function App() {
       if (grade === 6) return "goun";
       return "";
     };
-    const isNowInTodayMatchBannerWindow = (matchDateYmd) => {
-      const ymd = String(matchDateYmd || "").slice(0, 10);
-      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
-      if (!m) return false;
-      const y = Number(m[1]);
-      const mo = Number(m[2]);
-      const d = Number(m[3]);
-      const matchDay = new Date(y, mo - 1, d);
-      const prevDay = new Date(matchDay);
-      prevDay.setDate(prevDay.getDate() - 1);
-      const start = new Date(
-        prevDay.getFullYear(),
-        prevDay.getMonth(),
-        prevDay.getDate(),
-        14,
-        0,
-        0,
-        0
-      );
-      const end = new Date(y, mo - 1, d, 14, 0, 0, 0);
-      const now = new Date();
-      return now >= start && now < end;
-    };
 
     const byLeague = { malgeun: [], goun: [] };
     for (const m of sourceMatches) {
@@ -2885,15 +3135,29 @@ function App() {
       const away = awayNick ? `${awayNick}(${awayShort})` : awayShort;
       return `[${leagueLabel}] ${home} VS ${away}`;
     };
+    const firstMalgeunTournament = tournamentByLeague.malgeun[0] || null;
+    const firstGounTournament = tournamentByLeague.goun[0] || null;
+    const toTournamentText = (ev, leagueLabel) => {
+      if (!ev) return "";
+      return formatTournamentEventForScoreboard(ev.content, leagueLabel);
+    };
     setVLeagueTodayMatches({
-      malgeun: toMatchText(firstMalgeun, "맑은샘"),
-      goun: toMatchText(firstGoun, "고운샘"),
+      malgeun:
+        toTournamentText(firstMalgeunTournament, "맑은샘") ||
+        toMatchText(firstMalgeun, "맑은샘"),
+      goun:
+        toTournamentText(firstGounTournament, "고운샘") ||
+        toMatchText(firstGoun, "고운샘"),
     });
     setVLeagueTodayMatchIds({
-      malgeun: firstMalgeun?.id || null,
-      goun: firstGoun?.id || null,
+      malgeun: firstMalgeunTournament ? null : firstMalgeun?.id || null,
+      goun: firstGounTournament ? null : firstGoun?.id || null,
     });
   }, [clubs, vLeagueClasses, vLeagueMatches]);
+
+  useEffect(() => {
+    loadVLeagueTodayMatchTextRef.current = loadVLeagueTodayMatchText;
+  }, [loadVLeagueTodayMatchText]);
 
   const loadVLeagueRefereeData = useCallback(async (clubId) => {
     if (!clubId) {
@@ -3128,7 +3392,7 @@ function App() {
     if (page.type !== "clubMain") return;
     if (!isVLeagueClub(page.clubName)) return;
     if (isVLeagueAdmin) return;
-    if (clubTab === "vReferee" || clubTab === "vRules") {
+    if (clubTab === "vReferee" || clubTab === "vRules" || clubTab === "vTournament") {
       setClubTab("vMatches");
     }
   }, [page.type, page.clubName, clubTab, isVLeagueAdmin]);
@@ -5314,6 +5578,10 @@ function App() {
                                         .map((s) => String(s || "").trim());
                                       const winners = homeTournamentBracketRows.winners || {};
                                       const losers = homeTournamentBracketRows.losers || {};
+                                      const bronzeB1 = homeTournamentBracketRows.bronzeB1 || "-";
+                                      const bronzeB2 = homeTournamentBracketRows.bronzeB2 || "-";
+                                      const finalF1 = homeTournamentBracketRows.finalF1 || "-";
+                                      const finalF2 = homeTournamentBracketRows.finalF2 || "-";
                                       const boxClass = (slot, extra) => {
                                         let cls = "vleague-bracket-box";
                                         if (extra) cls += ` ${extra}`;
@@ -5324,16 +5592,22 @@ function App() {
                                         }
                                         return cls;
                                       };
-                                      const finalClass =
-                                        "vleague-bracket-box vleague-bracket-box--final" +
-                                        (winners.final ? " vleague-bracket-box--winner" : "") +
-                                        (bracketSparkSlot === "final"
-                                          ? " vleague-bracket-box--spark"
-                                          : "");
                                       return (
                                         <div className="vleague-bracket">
-                                          <div className={finalClass}>
-                                            {homeTournamentBracketRows.final}
+                                          <div className="vleague-bracket-final">
+                                            <div className="vleague-bracket-final-label">
+                                              결승전
+                                            </div>
+                                            <BracketMatchBox
+                                              homeLabel={finalF1}
+                                              awayLabel={finalF2}
+                                              homeSlot="f1"
+                                              awaySlot="f2"
+                                              winners={winners}
+                                              losers={losers}
+                                              sparkSlot={bracketSparkSlot}
+                                              className="vleague-bracket-match-box--final"
+                                            />
                                           </div>
                                           <svg
                                             className="vleague-bracket-wires"
@@ -5357,7 +5631,7 @@ function App() {
                                                   <path
                                                     key={`advance-${slot}`}
                                                     className={
-                                                      "vleague-bracket-wires-advance" +
+                                                      "vleague-bracket-wires-advance vleague-bracket-wires-advance--final" +
                                                       (bracketSparkSlot === slot
                                                         ? " vleague-bracket-wires-spark"
                                                         : "")
@@ -5394,6 +5668,58 @@ function App() {
                                                 className={boxClass("s2b")}
                                               />
                                             </div>
+                                          </div>
+                                          <svg
+                                            className="vleague-bracket-wires vleague-bracket-wires--down"
+                                            viewBox="0 0 100 24"
+                                            preserveAspectRatio="none"
+                                            aria-hidden
+                                          >
+                                            <path
+                                              className="vleague-bracket-wires-base"
+                                              d={homeTournamentBracketRows.downWireBase}
+                                              fill="none"
+                                              stroke="currentColor"
+                                              strokeWidth="2"
+                                              vectorEffect="non-scaling-stroke"
+                                              strokeLinejoin="miter"
+                                              strokeLinecap="square"
+                                            />
+                                            {Object.entries(
+                                              homeTournamentBracketRows.bronzeFeedPaths || {}
+                                            ).map(([slot, pathD]) => (
+                                              <path
+                                                key={`bronze-feed-${slot}`}
+                                                className={
+                                                  "vleague-bracket-wires-advance vleague-bracket-wires-advance--bronze" +
+                                                  (bracketSparkSlot === slot
+                                                    ? " vleague-bracket-wires-spark"
+                                                    : "")
+                                                }
+                                                d={pathD}
+                                                fill="none"
+                                                stroke="currentColor"
+                                                strokeWidth="2.5"
+                                                vectorEffect="non-scaling-stroke"
+                                                strokeLinejoin="miter"
+                                                strokeLinecap="square"
+                                              />
+                                            ))}
+                                          </svg>
+                                          <div className="vleague-bracket-bronze">
+                                            <div className="vleague-bracket-bronze-label">
+                                              3·4위전
+                                            </div>
+                                            <BracketMatchBox
+                                              homeLabel={bronzeB1}
+                                              awayLabel={bronzeB2}
+                                              homeSlot="b1"
+                                              awaySlot="b2"
+                                              winners={winners}
+                                              losers={losers}
+                                              sparkSlot={bracketSparkSlot}
+                                              className="vleague-bracket-match-box--bronze"
+                                            />
                                           </div>
                                         </div>
                                       );
@@ -5841,18 +6167,18 @@ function App() {
                     >
                       순위표
                     </button>
-                    <button
-                      type="button"
-                      className={clubTab === "vTournament" ? "club-tab active" : "club-tab"}
-                      onClick={() => {
-                        setMainMsg("");
-                        setClubTab("vTournament");
-                      }}
-                    >
-                      토너먼트 일정 생성
-                    </button>
                     {isVLeagueAdmin && (
                       <>
+                        <button
+                          type="button"
+                          className={clubTab === "vTournament" ? "club-tab active" : "club-tab"}
+                          onClick={() => {
+                            setMainMsg("");
+                            setClubTab("vTournament");
+                          }}
+                        >
+                          토너먼트 일정 생성
+                        </button>
                         <button
                           type="button"
                           className={clubTab === "vReferee" ? "club-tab active" : "club-tab"}
@@ -7199,13 +7525,14 @@ function App() {
                 </div>
               )}
 
-              {clubTab === "vTournament" && isVLeagueClub(page.clubName) && (
+              {clubTab === "vTournament" && isVLeagueClub(page.clubName) && isVLeagueAdmin && (
                 <div className="club-page-body">
                   <div className="vleague-section-head">
                     <div className="vleague-section-title">토너먼트 일정 생성</div>
                     <p className="vleague-section-desc">
-                      리그 순위 1~4위를 기준으로 준결승 2경기(단판), 결승 3경기
-                      (3판 2선승)를 생성합니다.
+                      리그 순위 1~4위로 준결승 2경기(단판)를 만들고, 준결승
+                      결과가 저장되면 패자 2팀의 3·4위전과 승자 2팀의 결승
+                      3경기(3판 2선승) 일정을 자동으로 채웁니다.
                     </p>
                   </div>
 
@@ -7241,6 +7568,16 @@ function App() {
                             type="date"
                             value={vLeagueTournamentStartDate}
                             onChange={(e) => setVLeagueTournamentStartDate(e.target.value)}
+                          />
+                        </label>
+                        <label className="vleague-field">
+                          <span>3·4위전 날짜</span>
+                          <input
+                            type="date"
+                            value={vLeagueTournamentBronzeDate}
+                            onChange={(e) =>
+                              setVLeagueTournamentBronzeDate(e.target.value)
+                            }
                           />
                         </label>
                       </div>
@@ -7279,7 +7616,10 @@ function App() {
                           >
                             <div className="vleague-match-left">
                               <div className="vleague-match-title">{row.content}</div>
-                              <div className="vleague-match-meta">{row.event_date}</div>
+                              <div className="vleague-match-meta">
+                                {row.event_date}
+                                {row.existingId ? " · 기존 준결승 유지" : ""}
+                              </div>
                             </div>
                           </div>
                         ))}
