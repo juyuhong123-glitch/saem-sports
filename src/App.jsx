@@ -52,6 +52,21 @@ function shortClassLabel(className) {
   return `${Number(m[1])}-${Number(m[2])}`;
 }
 
+function toYmdLocal(d) {
+  const x = d instanceof Date ? d : new Date(d);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  return `${x.getFullYear()}-${pad2(x.getMonth() + 1)}-${pad2(x.getDate())}`;
+}
+
+function addDaysYmdLocal(ymd, addDays) {
+  if (!ymd) return null;
+  const [yy, mm, dd] = String(ymd).split("-").map((x) => Number(x));
+  if (!Number.isFinite(yy) || !Number.isFinite(mm) || !Number.isFinite(dd)) return null;
+  const d = new Date(yy, mm - 1, dd);
+  d.setDate(d.getDate() + Number(addDays || 0));
+  return toYmdLocal(d);
+}
+
 function dedupeVLeagueMatchesByRound(rows) {
   const map = new Map();
   for (const row of rows || []) {
@@ -178,6 +193,43 @@ function isVLeagueCheerVisibleNow(cheer, matches, now = new Date()) {
 }
 
 const VLEAGUE_POSTPONE_UNDO_STORAGE_KEY = "vleague_postpone_undo_v1";
+
+/** 누적 집계: 오늘(KST) 기준 내일 이후 경기(match_date) 응원만 포함 */
+function getVLeagueCheerCumulativeMinMatchYmd(now = new Date()) {
+  return addDaysYmdLocal(toYmdLocal(now), 1);
+}
+
+function shouldCountCheerTowardCumulativeTotal(
+  classId,
+  createdAt,
+  matches,
+  minMatchYmd
+) {
+  const created = new Date(createdAt);
+  if (!classId || Number.isNaN(created.getTime())) return false;
+  const minYmd = String(minMatchYmd || "").slice(0, 10);
+  if (!minYmd) return false;
+
+  for (const m of matches || []) {
+    if (!m.match_date) continue;
+    if (m.home_class_id !== classId && m.away_class_id !== classId) continue;
+    const ymd = String(m.match_date).slice(0, 10);
+    if (ymd < minYmd) continue;
+    const w = getVLeagueCheerWindowForMatchDate(ymd);
+    if (!w) continue;
+    if (created >= w.start && created < w.end) return true;
+  }
+  return false;
+}
+
+function shouldCountCheerNowForCumulativeTotal(classId, matches, minMatchYmd) {
+  return shouldCountCheerTowardCumulativeTotal(
+    classId,
+    new Date(),
+    matches,
+    minMatchYmd
+  );
+}
 
 /** 2026년 대한민국 공휴일(대체공휴일 포함) */
 const KOREA_HOLIDAYS_2026 = new Set([
@@ -836,6 +888,8 @@ function App() {
   const [vLeagueCheerLoading, setVLeagueCheerLoading] = useState(false);
   const [vLeagueCheerBoard, setVLeagueCheerBoard] = useState([]);
   const [vLeagueCheerBoardMatches, setVLeagueCheerBoardMatches] = useState([]);
+  const [vLeagueCheerCumulativeTotals, setVLeagueCheerCumulativeTotals] = useState([]);
+  const [vLeagueCheerCumulativeLoading, setVLeagueCheerCumulativeLoading] = useState(false);
   const [vLeagueCheerBoardIndex, setVLeagueCheerBoardIndex] = useState(0);
   const [vLeagueCheerEventWinners, setVLeagueCheerEventWinners] = useState([]);
   const [cheerStripNoTransition, setCheerStripNoTransition] = useState(false);
@@ -3412,6 +3466,31 @@ function App() {
     );
   }, [vLeagueCheerBoard, vLeagueCheerBoardMatches, vLeagueMatches, cheerEligibilityTick]);
 
+  const vLeagueCheerCumulativeMinMatchYmd = useMemo(
+    () => getVLeagueCheerCumulativeMinMatchYmd(),
+    [cheerEligibilityTick]
+  );
+
+  const vLeagueCheerCumulativeSummary = useMemo(() => {
+    const totalMap = new Map();
+    for (const row of vLeagueCheerCumulativeTotals || []) {
+      if (row?.class_id) totalMap.set(row.class_id, Number(row.total_count) || 0);
+    }
+    const { malgeun, goun } = splitVLeagueClassesByGrade(vLeagueClasses || []);
+    const toRows = (list) =>
+      list.map((cls) => {
+        const nickname = String(cls.nickname || "").trim();
+        const classLabel = shortClassLabel(cls.class_name || "학급");
+        const teamName = nickname ? `${nickname}(${classLabel})` : classLabel;
+        return {
+          class_id: cls.id,
+          team_name: teamName,
+          total_count: totalMap.get(cls.id) || 0,
+        };
+      });
+    return { malgeun: toRows(malgeun), goun: toRows(goun) };
+  }, [vLeagueClasses, vLeagueCheerCumulativeTotals]);
+
   const vLeagueTodayYmd = useMemo(() => toYmd(new Date()), [cheerEligibilityTick]);
   const myClassEventWinnerToday = useMemo(() => {
     if (!vLeagueCheerWriterClassRow?.id) return null;
@@ -3461,6 +3540,85 @@ function App() {
     }
     setVLeagueCheers(data || []);
   }, []);
+
+  const loadVLeagueCheerCumulativeTotals = useCallback(async (clubIdsOrId) => {
+    const clubIds = Array.isArray(clubIdsOrId)
+      ? clubIdsOrId.filter(Boolean)
+      : [clubIdsOrId].filter(Boolean);
+    if (clubIds.length === 0) {
+      setVLeagueCheerCumulativeTotals([]);
+      return;
+    }
+    setVLeagueCheerCumulativeLoading(true);
+    let query = supabase
+      .from("vleague_cheer_class_totals")
+      .select("class_id, total_count, updated_at")
+      .order("total_count", { ascending: false });
+    if (clubIds.length === 1) {
+      query = query.eq("club_id", clubIds[0]);
+    } else {
+      query = query.in("club_id", clubIds);
+    }
+    const { data, error } = await query;
+    setVLeagueCheerCumulativeLoading(false);
+    if (error) {
+      setVLeagueCheerCumulativeTotals([]);
+      setMainMsg(
+        `응원 누적 집계 테이블을 불러오지 못했습니다. Supabase SQL Editor에서 docs/migrations/20260618-vleague-cheer-class-totals.sql 을 실행해 주세요. (${error.message})`
+      );
+      return;
+    }
+    setVLeagueCheerCumulativeTotals(data || []);
+  }, [setMainMsg]);
+
+  const adjustVLeagueCheerClassTotal = useCallback(
+    async (clubId, classId, delta) => {
+      if (!clubId || !classId || !delta) return true;
+      const { error: rpcErr } = await supabase.rpc("adjust_vleague_cheer_class_total", {
+        p_club_id: clubId,
+        p_class_id: classId,
+        p_delta: delta,
+      });
+      if (!rpcErr) return true;
+
+      const { data: cur } = await supabase
+        .from("vleague_cheer_class_totals")
+        .select("total_count")
+        .eq("club_id", clubId)
+        .eq("class_id", classId)
+        .maybeSingle();
+      const next = Math.max(0, (Number(cur?.total_count) || 0) + delta);
+      const { error: upErr } = await supabase.from("vleague_cheer_class_totals").upsert(
+        {
+          club_id: clubId,
+          class_id: classId,
+          total_count: next,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "club_id,class_id" }
+      );
+      return !upErr;
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (page.type !== "clubMain" || clubTab !== "vCheerLookup") return;
+    if (!isVLeagueClub(page.clubName) || !isVLeagueAdmin) return;
+    const vClubIds = getVLeagueClubIds();
+    if (vClubIds.length === 0) return;
+    loadVLeagueClasses(vClubIds);
+    loadVLeagueCheerCumulativeTotals(vClubIds);
+  }, [
+    page.type,
+    clubTab,
+    page.clubName,
+    clubs,
+    isVLeagueAdmin,
+    loadVLeagueClasses,
+    loadVLeagueCheerCumulativeTotals,
+    getVLeagueClubIds,
+  ]);
 
   const loadVLeagueCheerBoard = useCallback(async () => {
     const vLeagueClubRows = getClubsByName(V_LEAGUE_LABEL);
@@ -4034,7 +4192,8 @@ function App() {
       clubTab === "vReferee" ||
       clubTab === "vRules" ||
       clubTab === "vTournament" ||
-      clubTab === "vPromotion"
+      clubTab === "vPromotion" ||
+      clubTab === "vCheerLookup"
     ) {
       setClubTab("vMatches");
     }
@@ -4149,6 +4308,21 @@ function App() {
       return;
     }
     setVLeagueCheerDraft("");
+    const minMatchYmd = getVLeagueCheerCumulativeMinMatchYmd();
+    if (
+      shouldCountCheerNowForCumulativeTotal(
+        vLeagueCheerWriterClassRow.id,
+        vLeagueMatches,
+        minMatchYmd
+      )
+    ) {
+      await adjustVLeagueCheerClassTotal(
+        club.id,
+        vLeagueCheerWriterClassRow.id,
+        1
+      );
+      await loadVLeagueCheerCumulativeTotals(club.id);
+    }
     await loadVLeagueCheers(club.id, vLeagueCheerWriterClassRow.id);
     await loadVLeagueCheerBoard();
     setMainMsg("우리 반 응원 글을 등록했습니다.");
@@ -4187,6 +4361,18 @@ function App() {
     if (error) {
       setMainMsg(`응원 글 삭제 실패: ${error.message}`);
       return;
+    }
+    const minMatchYmd = getVLeagueCheerCumulativeMinMatchYmd();
+    if (
+      shouldCountCheerTowardCumulativeTotal(
+        row.class_id,
+        row.created_at,
+        vLeagueMatches,
+        minMatchYmd
+      )
+    ) {
+      await adjustVLeagueCheerClassTotal(club.id, row.class_id, -1);
+      await loadVLeagueCheerCumulativeTotals(club.id);
     }
     setMainMsg("응원 글을 삭제했습니다.");
     await loadVLeagueCheers(club.id);
@@ -6846,6 +7032,18 @@ function App() {
                         </button>
                         <button
                           type="button"
+                          className={
+                            clubTab === "vCheerLookup" ? "club-tab active" : "club-tab"
+                          }
+                          onClick={() => {
+                            setMainMsg("");
+                            setClubTab("vCheerLookup");
+                          }}
+                        >
+                          응원 조회
+                        </button>
+                        <button
+                          type="button"
                           className={clubTab === "vReferee" ? "club-tab active" : "club-tab"}
                           onClick={() => {
                             setMainMsg("");
@@ -8718,6 +8916,69 @@ function App() {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {clubTab === "vCheerLookup" && isVLeagueClub(page.clubName) && isVLeagueAdmin && (
+                <div className="club-page-body">
+                  <div className="vleague-section-head">
+                    <div className="vleague-section-title">응원 조회</div>
+                    <p className="vleague-section-desc">
+                      경기일이{" "}
+                      <strong>{formatYmdDot(vLeagueCheerCumulativeMinMatchYmd)}</strong>{" "}
+                      이후인 경기에 등록된 응원글만 학급별 누적 등록 횟수에
+                      포함됩니다. (오늘·이전 경기 응원은 집계하지 않습니다.)
+                    </p>
+                  </div>
+                  {vLeagueCheerCumulativeLoading ? (
+                    <div className="cal-loading">불러오는 중...</div>
+                  ) : (
+                    <div className="vleague-cheer-lookup-panel">
+                      {(["malgeun", "goun"]).map((leagueKey) => {
+                        const rows = vLeagueCheerCumulativeSummary[leagueKey] || [];
+                        const total = rows.reduce(
+                          (sum, row) => sum + (Number(row.total_count) || 0),
+                          0
+                        );
+                        return (
+                          <div key={leagueKey} className="vleague-cheer-lookup-group">
+                            <div className="vleague-cheer-lookup-group-head">
+                              <span>
+                                {leagueKey === "malgeun" ? "맑은샘 리그" : "고운샘 리그"}
+                              </span>
+                              <span className="vleague-cheer-lookup-total">
+                                누적 합계 {total}회
+                              </span>
+                            </div>
+                            {rows.length === 0 ? (
+                              <div className="activity-empty">참가 학급이 없습니다.</div>
+                            ) : (
+                              <div className="vleague-cheer-lookup-table-wrap">
+                                <table className="vleague-cheer-lookup-table">
+                                  <thead>
+                                    <tr>
+                                      <th scope="col">학급</th>
+                                      <th scope="col">누적 등록</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {rows.map((row) => (
+                                      <tr key={row.class_id}>
+                                        <td>{row.team_name}</td>
+                                        <td className="vleague-cheer-lookup-num">
+                                          {row.total_count}회
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 

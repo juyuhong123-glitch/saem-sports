@@ -4116,6 +4116,64 @@ body {
   font-weight: 700;
 }
 
+.vleague-cheer-lookup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.vleague-cheer-lookup-group {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.vleague-cheer-lookup-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.vleague-cheer-lookup-total {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.vleague-cheer-lookup-table-wrap {
+  overflow-x: auto;
+}
+
+.vleague-cheer-lookup-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.vleague-cheer-lookup-table th,
+.vleague-cheer-lookup-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.vleague-cheer-lookup-table th:last-child,
+.vleague-cheer-lookup-table td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.vleague-cheer-lookup-num {
+  font-weight: 900;
+  color: #0f766e;
+}
+
 .vleague-event-card {
   background: linear-gradient(160deg, #fff7ed, #f8fafc 60%);
   border: 1px solid #fdba74;
