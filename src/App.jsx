@@ -598,6 +598,43 @@ function buildPromotionMatchContent(
   return `${PROMOTION_EVENT_MARKER} ${gameNo}경기(단판): 고운샘 ${gounRank}위 ${gounTeamName} vs 맑은샘 ${malgeunRank}위 ${malgeunTeamName}`;
 }
 
+function parsePromotionMatchForPopup(content) {
+  const c = String(content || "");
+  const teams = parseTournamentTeamsFromContent(c);
+  const scoreMatch =
+    c.match(/승리점수\s*(\d+)\s*\|\s*결과\s*(\d+)\s*:\s*(\d+)/) ||
+    c.match(/결과\s*(\d+)\s*:\s*(\d+)/);
+  let homeScore = null;
+  let awayScore = null;
+  let winScore = null;
+  if (scoreMatch) {
+    if (scoreMatch.length >= 4) {
+      winScore = Number(scoreMatch[1]);
+      homeScore = Number(scoreMatch[2]);
+      awayScore = Number(scoreMatch[3]);
+    } else {
+      homeScore = Number(scoreMatch[1]);
+      awayScore = Number(scoreMatch[2]);
+    }
+  }
+  const winnerSide = getTournamentWinnerSideFromContent(c);
+  const gameNoMatch = c.match(/(\d+)\s*경기/);
+  const gameNo = gameNoMatch ? Number(gameNoMatch[1]) : null;
+  const gounRankMatch = c.match(/고운샘\s*(\d+)\s*위/);
+  const malgeunRankMatch = c.match(/맑은샘\s*(\d+)\s*위/);
+  return {
+    teams,
+    homeScore: Number.isFinite(homeScore) ? homeScore : null,
+    awayScore: Number.isFinite(awayScore) ? awayScore : null,
+    winScore: Number.isFinite(winScore) ? winScore : null,
+    winnerSide,
+    gameNo: Number.isFinite(gameNo) ? gameNo : null,
+    gounRank: gounRankMatch ? Number(gounRankMatch[1]) : null,
+    malgeunRank: malgeunRankMatch ? Number(malgeunRankMatch[1]) : null,
+    hasResult: homeScore != null && awayScore != null,
+  };
+}
+
 function getTournamentPhaseLabel(content) {
   const c = String(content || "");
   if (c.includes("준결승 1")) return "준결승";
@@ -635,19 +672,6 @@ function getTournamentLeagueKeyFromContent(content) {
   if (c.includes("[맑은샘]")) return "malgeun";
   if (c.includes("[고운샘]")) return "goun";
   return "";
-}
-
-function getBracketSparkSlotFromEvent(content, winnerSide) {
-  const c = String(content || "");
-  if (!winnerSide) return null;
-  if (c.includes("준결승 1")) return winnerSide === "home" ? "s1a" : "s1b";
-  if (c.includes("준결승 2")) return winnerSide === "home" ? "s2a" : "s2b";
-  if (c.includes("3·4위전")) return winnerSide === "home" ? "b1" : "b2";
-  if (c.includes("결승")) {
-    if (!winnerSide) return null;
-    return winnerSide === "home" ? "f1" : "f2";
-  }
-  return null;
 }
 
 function parseBracketTeamLabel(raw) {
@@ -921,12 +945,10 @@ function App() {
   const [vLeagueRuleLoading, setVLeagueRuleLoading] = useState(false);
   const [vLeagueRuleSaving, setVLeagueRuleSaving] = useState(false);
   const [showVLeagueRulePopup, setShowVLeagueRulePopup] = useState(false);
-  const [showVLeagueHomeStandingsPopup, setShowVLeagueHomeStandingsPopup] = useState(false);
-  const [showVLeagueHomeTournamentPopup, setShowVLeagueHomeTournamentPopup] =
+  const [showVLeagueHomePromotionPopup, setShowVLeagueHomePromotionPopup] =
     useState(false);
   const [homeVLeagueTournamentEvents, setHomeVLeagueTournamentEvents] = useState([]);
   const [homeVLeagueTournamentLoading, setHomeVLeagueTournamentLoading] = useState(false);
-  const [bracketSparkSlot, setBracketSparkSlot] = useState(null);
   const [homeTournamentYmdByClubId, setHomeTournamentYmdByClubId] = useState({});
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const d = new Date();
@@ -942,16 +964,6 @@ function App() {
   const [eventEditorDate, setEventEditorDate] = useState("");
   const [newEventContent, setNewEventContent] = useState("");
 
-  const closeHomeTournamentPopupToStandings = useCallback(() => {
-    setShowVLeagueHomeTournamentPopup(false);
-    setShowVLeagueHomeStandingsPopup(true);
-  }, []);
-
-  useEffect(() => {
-    if (!bracketSparkSlot) return undefined;
-    const timer = window.setTimeout(() => setBracketSparkSlot(null), 3600);
-    return () => window.clearTimeout(timer);
-  }, [bracketSparkSlot]);
   const [approvedStudents, setApprovedStudents] = useState([]); // [{student_id, student_name}]
   const [attendanceByStudentId, setAttendanceByStudentId] = useState({}); // { [student_id]: true|false }
   const [attendanceLoading, setAttendanceLoading] = useState(false);
@@ -2104,9 +2116,6 @@ function App() {
             ev.id === row.id ? { ...ev, content: nextContent } : ev
           )
         );
-        const winnerSide = homeWin ? "home" : "away";
-        const sparkSlot = getBracketSparkSlotFromEvent(row.content, winnerSide);
-        if (sparkSlot) setBracketSparkSlot(sparkSlot);
         setVLeagueTournamentResultDrafts((prev) => {
           const next = { ...prev };
           delete next[row.id];
@@ -2694,6 +2703,55 @@ function App() {
       ),
     [vLeagueComputedStandings]
   );
+
+  const homePromotionPopupRows = useMemo(() => {
+    const stripPromotionLeagueRankPrefix = (raw) =>
+      String(raw || "")
+        .replace(/^(고운샘|맑은샘)\s*\d+\s*위\s*/u, "")
+        .trim();
+    return (vLeaguePromotionEvents || [])
+      .slice()
+      .sort((a, b) => {
+        const dateCmp = String(a.event_date || "").localeCompare(String(b.event_date || ""));
+        if (dateCmp !== 0) return dateCmp;
+        const aNo = parsePromotionMatchForPopup(a.content).gameNo || 0;
+        const bNo = parsePromotionMatchForPopup(b.content).gameNo || 0;
+        return aNo - bNo;
+      })
+      .map((ev) => {
+        const parsed = parsePromotionMatchForPopup(ev.content);
+        const homeLabel = parsed.teams
+          ? stripPromotionLeagueRankPrefix(parsed.teams.home) || "고운샘 팀"
+          : "고운샘 팀";
+        const awayLabel = parsed.teams
+          ? stripPromotionLeagueRankPrefix(parsed.teams.away) || "맑은샘 팀"
+          : "맑은샘 팀";
+        let statusLabel = "예정";
+        let winnerLabel = "";
+        if (parsed.hasResult) {
+          statusLabel = "종료";
+          if (parsed.winnerSide === "home") winnerLabel = "고운샘 승";
+          else if (parsed.winnerSide === "away") winnerLabel = "맑은샘 승";
+          else winnerLabel = "결과 확인 중";
+        }
+        return {
+          id: ev.id,
+          eventDate: ev.event_date,
+          gameNo: parsed.gameNo,
+          homeLabel,
+          awayLabel,
+          homeScore: parsed.homeScore,
+          awayScore: parsed.awayScore,
+          winScore: parsed.winScore,
+          hasResult: parsed.hasResult,
+          winnerSide: parsed.winnerSide,
+          statusLabel,
+          winnerLabel,
+          gounRank: parsed.gounRank,
+          malgeunRank: parsed.malgeunRank,
+        };
+      });
+  }, [vLeaguePromotionEvents]);
 
   const homeTournamentBracketRows = useMemo(() => {
     const leagueLabel = getVLeagueLabel(vLeagueGradeTab);
@@ -5566,17 +5624,17 @@ function App() {
 
   const handleSelectClub = async (name) => {
     setSelectedClubName(name);
-    setShowVLeagueHomeStandingsPopup(false);
+    setShowVLeagueHomePromotionPopup(false);
     if (isVLeagueClub(name)) {
-      await loadHomeVLeagueTournamentEvents();
-      setShowVLeagueHomeTournamentPopup(true);
-    } else {
-      setShowVLeagueHomeTournamentPopup(false);
+      const vClubIds = getVLeagueClubIds();
+      if (vClubIds.length > 0) {
+        await loadVLeaguePromotionEvents(vClubIds);
+      }
+      setShowVLeagueHomePromotionPopup(true);
     }
     setApplications([]);
     setMainMsg("");
     if (page.type !== "home") setPage({ type: "home", clubName: null });
-
   };
 
   const handleApplyClub = async () => {
@@ -5670,8 +5728,7 @@ function App() {
 
   const handleEnterClub = async (clubName) => {
     setMainMsg("");
-    setShowVLeagueHomeStandingsPopup(false);
-    setShowVLeagueHomeTournamentPopup(false);
+    setShowVLeagueHomePromotionPopup(false);
     const club = getClubByName(clubName);
     if (!club) return;
 
@@ -5707,8 +5764,7 @@ function App() {
   const goTeacherMain = (clubName) => {
     setApplications([]);
     setMainMsg("");
-    setShowVLeagueHomeStandingsPopup(false);
-    setShowVLeagueHomeTournamentPopup(false);
+    setShowVLeagueHomePromotionPopup(false);
     const club = getClubByName(clubName);
     setPage({ type: "clubMain", clubName });
     setClubTab("schedule");
@@ -6201,376 +6257,123 @@ function App() {
                         )}
                         {name === V_LEAGUE_LABEL && isActive && (
                           <>
-                            {showVLeagueHomeStandingsPopup && (
+                            {showVLeagueHomePromotionPopup && (
                               <div
                                 className="vleague-home-standings-overlay"
                                 role="dialog"
                                 aria-modal="true"
-                                aria-label="새샘 V리그 현재 순위표"
+                                aria-label="새샘 V리그 승강전 경기결과"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setShowVLeagueHomeStandingsPopup(false);
+                                  setShowVLeagueHomePromotionPopup(false);
                                 }}
                               >
                                 <div
-                                  className="vleague-home-standings-modal"
+                                  className="vleague-home-standings-modal vleague-home-promotion-modal"
                                   onClick={(e) => e.stopPropagation()}
                                   onMouseDown={(e) => e.stopPropagation()}
                                 >
                                   <div className="vleague-home-standings-head">
-                                    <div className="vleague-section-title">순위표</div>
-                                    {vLeagueStandingsUsesTournament ? (
-                                      <p className="vleague-section-desc">
-                                        리그전·토너먼트가 모두 종료되어 토너먼트 최종 순위가
-                                        반영된 순위표입니다.
-                                      </p>
-                                    ) : null}
+                                    <div className="vleague-section-title">승강전 경기결과</div>
                                   </div>
-                                  <div className="vleague-grade-tabs">
-                                    <button
-                                      type="button"
-                                      className={
-                                        "vleague-grade-tab vleague-grade-tab--malgeun" +
-                                        (vLeagueGradeTab === "malgeun" ? " active" : "")
-                                      }
-                                      onClick={() => setVLeagueGradeTab("malgeun")}
-                                    >
-                                      맑은샘 리그
-                                      <span className="vleague-grade-tab-count">(5학년)</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={
-                                        "vleague-grade-tab vleague-grade-tab--goun" +
-                                        (vLeagueGradeTab === "goun" ? " active" : "")
-                                      }
-                                      onClick={() => setVLeagueGradeTab("goun")}
-                                    >
-                                      고운샘 리그
-                                      <span className="vleague-grade-tab-count">(6학년)</span>
-                                    </button>
-                                  </div>
-                                  <div className="vleague-standings-wrap">
-                                    {vLeagueComputedStandings.length === 0 ? (
-                                      <div className="activity-empty">
-                                        순위 데이터가 없습니다. 대진표에서 경기 결과를 입력해
-                                        주세요.
-                                      </div>
-                                    ) : (
-                                      <div className="vleague-standings-table-wrap">
-                                        <table className="vleague-standings-table">
-                                          <thead>
-                                            <tr>
-                          <th scope="col">
-                            <div className="vleague-rank-cell vleague-rank-head-cell">
-                              <span className="vleague-rank-note-left">
-                                {vLeagueStandingsUsesTournament ? "" : "토너먼트"}
-                              </span>
-                              <span className="vleague-rank-core">순위</span>
-                              <span className="vleague-rank-note-right">승격</span>
-                            </div>
-                          </th>
-                                              <th scope="col">팀(학급)</th>
-                                              <th scope="col">승</th>
-                                              <th scope="col">패</th>
-                                              <th scope="col">승점</th>
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {vLeagueComputedStandings.map((row) => (
-                                              <tr key={row.class_id}>
-                                                <td>
-                                                  <span className="vleague-rank-cell">
-                                                    <span
-                                                      className={
-                                                        "vleague-rank-note-left" +
-                                                        (!vLeagueStandingsUsesTournament &&
-                                                        row.rank_order <= 4
-                                                          ? ""
-                                                          : " vleague-rank-note-placeholder")
-                                                      }
-                                                    >
-                                                      {!vLeagueStandingsUsesTournament &&
-                                                      row.rank_order <= 4
-                                                        ? "토너먼트"
-                                                        : ""}
-                                                    </span>
-                                                    <span className="vleague-rank-core">
-                                                      <span
-                                                        className={
-                                                          "vleague-rank-text" +
-                                                          (row.rank_order <= 3
-                                                            ? " vleague-rank-text--" + row.rank_order
-                                                            : "")
-                                                        }
-                                                      >
-                                                        {row.rank_order}위
-                                                      </span>
-                                                    </span>
-                                                    <span
-                                                      className={
-                                                        "vleague-rank-note-right" +
-                                                        ((vLeagueGradeTab === "malgeun" &&
-                                                          row.rank_order >= 1 &&
-                                                          row.rank_order <= 3) ||
-                                                        (vLeagueGradeTab === "goun" &&
-                                                          row.rank_order >= 5 &&
-                                                          row.rank_order <= 7)
-                                                          ? ""
-                                                          : " vleague-rank-note-placeholder")
-                                                      }
-                                                    >
-                                                      {(vLeagueGradeTab === "malgeun" &&
-                                                        row.rank_order >= 1 &&
-                                                        row.rank_order <= 3) ||
-                                                      (vLeagueGradeTab === "goun" &&
-                                                        row.rank_order >= 5 &&
-                                                        row.rank_order <= 7)
-                                                        ? vLeagueGradeTab === "malgeun"
-                                                          ? "승격"
-                                                          : "강등"
-                                                        : ""}
-                                                    </span>
-                                                  </span>
-                                                </td>
-                                                <td className="vleague-team-cell">
-                                                  {row.team_name}
-                                                </td>
-                                                <td>{row.wins ?? 0}</td>
-                                                <td>{row.losses ?? 0}</td>
-                                                <td>{row.points ?? 0}</td>
-                                              </tr>
-                                            ))}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    )}
-                                  </div>
-                                  <div className="vleague-home-standings-actions">
-                                    <button
-                                      type="button"
-                                      className="vleague-home-standings-close"
-                                      onClick={() => setShowVLeagueHomeStandingsPopup(false)}
-                                    >
-                                      닫기
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                            {showVLeagueHomeTournamentPopup && (
-                              <div
-                                className="vleague-home-standings-overlay"
-                                role="dialog"
-                                aria-modal="true"
-                                aria-label="새샘 V리그 토너먼트 진행표"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  closeHomeTournamentPopupToStandings();
-                                }}
-                              >
-                                <div
-                                  className="vleague-home-standings-modal vleague-home-tournament-modal"
-                                  onClick={(e) => e.stopPropagation()}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                >
-                                  <div className="vleague-home-standings-head">
-                                    <div className="vleague-section-title">토너먼트 진행표</div>
-                                  </div>
-                                  <div className="vleague-grade-tabs">
-                                    <button
-                                      type="button"
-                                      className={
-                                        "vleague-grade-tab vleague-grade-tab--malgeun" +
-                                        (vLeagueGradeTab === "malgeun" ? " active" : "")
-                                      }
-                                      onClick={() => setVLeagueGradeTab("malgeun")}
-                                    >
-                                      맑은샘 리그
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={
-                                        "vleague-grade-tab vleague-grade-tab--goun" +
-                                        (vLeagueGradeTab === "goun" ? " active" : "")
-                                      }
-                                      onClick={() => setVLeagueGradeTab("goun")}
-                                    >
-                                      고운샘 리그
-                                    </button>
-                                  </div>
-                                  {homeVLeagueTournamentLoading ? (
+                                  {vLeaguePromotionLoading ? (
                                     <div className="cal-loading">불러오는 중...</div>
-                                  ) : !homeTournamentBracketRows.hasAny ? (
+                                  ) : homePromotionPopupRows.length === 0 ? (
                                     <div className="activity-empty">
-                                      저장된 토너먼트 일정이 없습니다.
+                                      저장된 승강전 일정이 없습니다.
                                     </div>
                                   ) : (
-                                    (() => {
-                                      const [s1a, s1b] = String(
-                                        homeTournamentBracketRows.semi1 || ""
-                                      )
-                                        .split(" vs ")
-                                        .map((s) => String(s || "").trim());
-                                      const [s2a, s2b] = String(
-                                        homeTournamentBracketRows.semi2 || ""
-                                      )
-                                        .split(" vs ")
-                                        .map((s) => String(s || "").trim());
-                                      const winners = homeTournamentBracketRows.winners || {};
-                                      const losers = homeTournamentBracketRows.losers || {};
-                                      const bronzeB1 = homeTournamentBracketRows.bronzeB1 || "-";
-                                      const bronzeB2 = homeTournamentBracketRows.bronzeB2 || "-";
-                                      const finalF1 = homeTournamentBracketRows.finalF1 || "-";
-                                      const finalF2 = homeTournamentBracketRows.finalF2 || "-";
-                                      const boxClass = (slot, extra) => {
-                                        let cls = "vleague-bracket-box";
-                                        if (extra) cls += ` ${extra}`;
-                                        if (winners[slot]) cls += " vleague-bracket-box--winner";
-                                        if (losers[slot]) cls += " vleague-bracket-box--loser";
-                                        if (bracketSparkSlot === slot) {
-                                          cls += " vleague-bracket-box--spark";
-                                        }
-                                        return cls;
-                                      };
-                                      return (
-                                        <div className="vleague-bracket">
-                                          <div className="vleague-bracket-final">
-                                            <div className="vleague-bracket-final-label">
-                                              결승전
-                                            </div>
-                                            <BracketMatchBox
-                                              homeLabel={finalF1}
-                                              awayLabel={finalF2}
-                                              homeSlot="f1"
-                                              awaySlot="f2"
-                                              winners={winners}
-                                              losers={losers}
-                                              sparkSlot={bracketSparkSlot}
-                                              className="vleague-bracket-match-box--final"
-                                            />
+                                    <div className="vleague-promotion-popup-list">
+                                      {homePromotionPopupRows.map((row) => (
+                                        <div
+                                          key={row.id}
+                                          className={
+                                            "vleague-promotion-popup-card" +
+                                            (row.hasResult
+                                              ? " vleague-promotion-popup-card--done"
+                                              : "")
+                                          }
+                                        >
+                                          <div className="vleague-promotion-popup-top">
+                                            <span className="vleague-promotion-popup-game">
+                                              {row.gameNo ? `${row.gameNo}경기` : "승강전"}
+                                            </span>
+                                            <span className="vleague-promotion-popup-date">
+                                              {row.eventDate || "-"}
+                                            </span>
+                                            <span
+                                              className={
+                                                "vleague-promotion-popup-status" +
+                                                (row.hasResult
+                                                  ? " vleague-promotion-popup-status--done"
+                                                  : "")
+                                              }
+                                            >
+                                              {row.statusLabel}
+                                            </span>
                                           </div>
-                                          <svg
-                                            className="vleague-bracket-wires"
-                                            viewBox="0 0 100 44"
-                                            preserveAspectRatio="none"
-                                            aria-hidden
-                                          >
-                                            <path
-                                              className="vleague-bracket-wires-base"
-                                              d={BRACKET_WIRE_BASE}
-                                              fill="none"
-                                              stroke="currentColor"
-                                              strokeWidth="2"
-                                              vectorEffect="non-scaling-stroke"
-                                              strokeLinejoin="miter"
-                                              strokeLinecap="square"
-                                            />
-                                            {Object.entries(BRACKET_ADVANCE_PATHS).map(
-                                              ([slot, pathD]) =>
-                                                winners[slot] ? (
-                                                  <path
-                                                    key={`advance-${slot}`}
-                                                    className={
-                                                      "vleague-bracket-wires-advance vleague-bracket-wires-advance--final" +
-                                                      (bracketSparkSlot === slot
-                                                        ? " vleague-bracket-wires-spark"
-                                                        : "")
-                                                    }
-                                                    d={pathD}
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    strokeWidth="2.5"
-                                                    vectorEffect="non-scaling-stroke"
-                                                    strokeLinejoin="miter"
-                                                    strokeLinecap="square"
-                                                  />
-                                                ) : null
-                                            )}
-                                          </svg>
-                                          <div className="vleague-bracket-teams">
-                                            <div className="vleague-bracket-pair">
-                                              <BracketTeamBox
-                                                label={s1a || homeTournamentBracketRows.semi1}
-                                                className={boxClass("s1a")}
-                                              />
-                                              <BracketTeamBox
-                                                label={s1b}
-                                                className={boxClass("s1b")}
-                                              />
-                                            </div>
-                                            <div className="vleague-bracket-pair">
-                                              <BracketTeamBox
-                                                label={s2a || homeTournamentBracketRows.semi2}
-                                                className={boxClass("s2a")}
-                                              />
-                                              <BracketTeamBox
-                                                label={s2b}
-                                                className={boxClass("s2b")}
-                                              />
-                                            </div>
-                                          </div>
-                                          <svg
-                                            className="vleague-bracket-wires vleague-bracket-wires--down"
-                                            viewBox="0 0 100 24"
-                                            preserveAspectRatio="none"
-                                            aria-hidden
-                                          >
-                                            <path
-                                              className="vleague-bracket-wires-base"
-                                              d={homeTournamentBracketRows.downWireBase}
-                                              fill="none"
-                                              stroke="currentColor"
-                                              strokeWidth="2"
-                                              vectorEffect="non-scaling-stroke"
-                                              strokeLinejoin="miter"
-                                              strokeLinecap="square"
-                                            />
-                                            {Object.entries(
-                                              homeTournamentBracketRows.bronzeFeedPaths || {}
-                                            ).map(([slot, pathD]) => (
-                                              <path
-                                                key={`bronze-feed-${slot}`}
-                                                className={
-                                                  "vleague-bracket-wires-advance vleague-bracket-wires-advance--bronze" +
-                                                  (bracketSparkSlot === slot
-                                                    ? " vleague-bracket-wires-spark"
+                                          <div className="vleague-promotion-popup-match">
+                                            <div
+                                              className={
+                                                "vleague-promotion-popup-side" +
+                                                (row.winnerSide === "home"
+                                                  ? " vleague-promotion-popup-side--winner"
+                                                  : row.winnerSide === "away"
+                                                    ? " vleague-promotion-popup-side--loser"
                                                     : "")
-                                                }
-                                                d={pathD}
-                                                fill="none"
-                                                stroke="currentColor"
-                                                strokeWidth="2.5"
-                                                vectorEffect="non-scaling-stroke"
-                                                strokeLinejoin="miter"
-                                                strokeLinecap="square"
-                                              />
-                                            ))}
-                                          </svg>
-                                          <div className="vleague-bracket-bronze">
-                                            <div className="vleague-bracket-bronze-label">
-                                              3·4위전
+                                              }
+                                            >
+                                              <span className="vleague-promotion-popup-league">
+                                                고운샘
+                                                {row.gounRank ? ` ${row.gounRank}위` : ""}
+                                              </span>
+                                              <span className="vleague-promotion-popup-team">
+                                                {row.homeLabel}
+                                              </span>
+                                              <span className="vleague-promotion-popup-score">
+                                                {row.hasResult ? row.homeScore : "-"}
+                                              </span>
                                             </div>
-                                            <BracketMatchBox
-                                              homeLabel={bronzeB1}
-                                              awayLabel={bronzeB2}
-                                              homeSlot="b1"
-                                              awaySlot="b2"
-                                              winners={winners}
-                                              losers={losers}
-                                              sparkSlot={bracketSparkSlot}
-                                              className="vleague-bracket-match-box--bronze"
-                                            />
+                                            <div className="vleague-promotion-popup-vs">VS</div>
+                                            <div
+                                              className={
+                                                "vleague-promotion-popup-side" +
+                                                (row.winnerSide === "away"
+                                                  ? " vleague-promotion-popup-side--winner"
+                                                  : row.winnerSide === "home"
+                                                    ? " vleague-promotion-popup-side--loser"
+                                                    : "")
+                                              }
+                                            >
+                                              <span className="vleague-promotion-popup-league">
+                                                맑은샘
+                                                {row.malgeunRank ? ` ${row.malgeunRank}위` : ""}
+                                              </span>
+                                              <span className="vleague-promotion-popup-team">
+                                                {row.awayLabel}
+                                              </span>
+                                              <span className="vleague-promotion-popup-score">
+                                                {row.hasResult ? row.awayScore : "-"}
+                                              </span>
+                                            </div>
                                           </div>
+                                          {row.winnerLabel ? (
+                                            <div className="vleague-promotion-popup-winner">
+                                              {row.winnerLabel}
+                                              {row.winScore
+                                                ? ` · 승리점수 ${row.winScore}`
+                                                : ""}
+                                            </div>
+                                          ) : null}
                                         </div>
-                                      );
-                                    })()
+                                      ))}
+                                    </div>
                                   )}
                                   <div className="vleague-home-standings-actions">
                                     <button
                                       type="button"
                                       className="vleague-home-standings-close"
-                                      onClick={closeHomeTournamentPopupToStandings}
+                                      onClick={() => setShowVLeagueHomePromotionPopup(false)}
                                     >
                                       닫기
                                     </button>
