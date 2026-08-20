@@ -2036,6 +2036,32 @@ body {
   margin-bottom: 12px;
 }
 
+.vleague-semester-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+  max-width: 360px;
+}
+
+.vleague-semester-tab {
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 900;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.vleague-semester-tab.active {
+  background: linear-gradient(135deg, #0f766e 0%, #115e59 100%);
+  border-color: #0f766e;
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(15, 118, 110, 0.28);
+}
+
 .club-tab {
   border: none;
   border-radius: 999px;
@@ -3680,6 +3706,14 @@ body {
   padding: 14px;
 }
 
+.vleague-home-s2-progress-modal {
+  width: min(96vw, 980px);
+}
+
+.vleague-s2-team-detail-overlay {
+  z-index: 60;
+}
+
 .vleague-home-tournament-modal {
   max-width: min(96vw, 580px);
 }
@@ -4427,6 +4461,339 @@ body {
 .vleague-classes-body .vleague-class-stats--right {
   min-width: 130px;
   text-align: center;
+}
+
+.vleague-class-row--compact {
+  padding: 10px 12px;
+  min-height: 64px;
+  box-sizing: border-box;
+}
+
+.vleague-s2-group-duel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  max-width: 1100px;
+  margin: 8px auto 0;
+}
+
+.vleague-s2-group-col {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-sizing: border-box;
+}
+
+.vleague-s2-group-col--a {
+  background:
+    linear-gradient(165deg, rgba(255, 247, 250, 0.95), rgba(255, 232, 240, 0.55));
+}
+
+.vleague-s2-group-col--b {
+  background:
+    linear-gradient(165deg, rgba(240, 253, 250, 0.95), rgba(204, 251, 241, 0.45));
+}
+
+.vleague-s2-group-head {
+  flex: 0 0 auto;
+  min-height: 48px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.vleague-s2-group-label {
+  font-size: 18px;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.vleague-s2-group-hint {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.vleague-s2-group-vs {
+  align-self: center;
+  font-size: 18px;
+  font-weight: 900;
+  color: #94a3b8;
+  letter-spacing: 0.08em;
+}
+
+.vleague-s2-slot-list {
+  flex: 1 1 auto;
+  display: grid !important;
+  grid-template-rows: repeat(4, minmax(64px, 1fr));
+  gap: 10px;
+  min-height: 0;
+}
+
+.vleague-s2-group-col .vleague-class-row--compact {
+  height: 100%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+}
+
+.vleague-s2-slot-empty {
+  visibility: hidden;
+  pointer-events: none;
+  border-style: dashed;
+}
+
+.vleague-s2-league-body .vleague-grade-tabs {
+  max-width: min(100%, 560px);
+}
+
+.vleague-s2-progress-duel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  max-width: 1100px;
+  margin: 8px auto 0;
+}
+
+.vleague-s2-progress-col {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-sizing: border-box;
+}
+
+.vleague-s2-progress-col--a {
+  background:
+    linear-gradient(165deg, rgba(255, 247, 250, 0.95), rgba(255, 232, 240, 0.55));
+}
+
+.vleague-s2-progress-col--b {
+  background:
+    linear-gradient(165deg, rgba(240, 253, 250, 0.95), rgba(204, 251, 241, 0.45));
+}
+
+.vleague-s2-progress-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 64px;
+  margin-bottom: 12px;
+}
+
+.vleague-s2-group-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.1;
+}
+
+.vleague-s2-group-total-num {
+  font-size: 28px;
+  font-weight: 900;
+  color: #0f766e;
+}
+
+.vleague-s2-group-total-unit {
+  font-size: 12px;
+  font-weight: 800;
+  color: #64748b;
+}
+
+.vleague-s2-group-bonus {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f766e;
+  opacity: 0.9;
+}
+
+.vleague-s2-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vleague-s2-progress-list.vleague-s2-slot-list {
+  gap: 8px;
+  grid-template-rows: repeat(4, minmax(56px, 1fr));
+}
+
+.vleague-s2-progress-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  height: 100%;
+  min-height: 56px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-sizing: border-box;
+}
+
+.vleague-s2-progress-row--clickable {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.vleague-s2-progress-row--clickable:hover {
+  border-color: rgba(15, 118, 110, 0.45);
+  box-shadow: 0 6px 14px rgba(15, 118, 110, 0.12);
+  transform: translateY(-1px);
+}
+
+.vleague-s2-progress-row--clickable:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+.vleague-s2-progress-rank {
+  font-size: 13px;
+  font-weight: 900;
+  color: #0f766e;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.vleague-s2-progress-team {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  word-break: keep-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vleague-s2-team-detail-modal {
+  width: min(92vw, 480px);
+}
+
+.vleague-s2-team-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.vleague-s2-team-detail-close {
+  flex: 0 0 auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.vleague-s2-team-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vleague-s2-team-detail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 12px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.vleague-s2-team-detail-row--win {
+  background: linear-gradient(135deg, #ecfdf5, #f0fdf4);
+  border-color: #a7f3d0;
+}
+
+.vleague-s2-team-detail-row--loss {
+  background: linear-gradient(135deg, #fff1f2, #fff7f7);
+  border-color: #fecdd3;
+}
+
+.vleague-s2-team-detail-row--draw,
+.vleague-s2-team-detail-row--scheduled,
+.vleague-s2-team-detail-row--none {
+  background: #f8fafc;
+}
+
+.vleague-s2-team-detail-opp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  word-break: keep-all;
+  min-width: 0;
+}
+
+.vleague-s2-team-detail-vs {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+}
+
+.vleague-s2-team-detail-score {
+  font-size: 14px;
+  font-weight: 900;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.vleague-s2-team-detail-result {
+  min-width: 40px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 900;
+  color: #64748b;
+}
+
+.vleague-s2-team-detail-row--win .vleague-s2-team-detail-result {
+  color: #047857;
+}
+
+.vleague-s2-team-detail-row--loss .vleague-s2-team-detail-result {
+  color: #be123c;
+}
+
+.vleague-s2-progress-record {
+  font-size: 12px;
+  font-weight: 800;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.vleague-s2-progress-pts {
+  font-size: 14px;
+  font-weight: 900;
+  color: #0f766e;
+  white-space: nowrap;
 }
 
 .vleague-class-row {
@@ -5294,12 +5661,32 @@ body {
 }
 
 @media (max-width: 600px) {
+  .vleague-s2-group-duel,
+  .vleague-s2-progress-duel {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .vleague-s2-group-vs {
+    padding-top: 0;
+    text-align: center;
+  }
+
+  .vleague-s2-slot-list {
+    grid-template-rows: none;
+    grid-auto-rows: minmax(56px, auto);
+  }
+
+  .vleague-s2-slot-empty {
+    display: none;
+  }
+
   .vleague-classes-body .vleague-class-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      "class stats"
-      "nick nick";
+      "class"
+      "nick";
     align-items: center;
     row-gap: 8px;
     column-gap: 10px;
@@ -5313,11 +5700,7 @@ body {
   }
 
   .vleague-classes-body .vleague-class-stats--right {
-    grid-area: stats;
-    min-width: auto;
-    text-align: right;
-    white-space: nowrap;
-    margin-left: 0;
+    display: none;
   }
 
   .vleague-classes-body .vleague-class-nick-block {
