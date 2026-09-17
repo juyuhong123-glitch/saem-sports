@@ -4299,6 +4299,7 @@ function App() {
     }
     const ymdYesterday = addDaysYmd(today, -1);
     const ymdTomorrow = addDaysYmd(today, 1);
+    /** 오늘 경기 전광판: 전날 14:00 ~ 경기일 종일(다음날 00:00 전까지) */
     const isNowInTodayMatchBannerWindow = (matchDateYmd) => {
       const ymd = String(matchDateYmd || "").slice(0, 10);
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
@@ -4318,12 +4319,16 @@ function App() {
         0,
         0
       );
-      const end = new Date(y, mo - 1, d, 14, 0, 0, 0);
+      const end = new Date(y, mo - 1, d + 1, 0, 0, 0, 0);
       const now = new Date();
       return now >= start && now < end;
     };
 
-    const [{ data: matches, error }, { data: tournamentEvents }] = await Promise.all([
+    const [
+      { data: matches, error },
+      { data: s2Matches },
+      { data: tournamentEvents },
+    ] = await Promise.all([
       supabase
         .from("vleague_matches")
         .select("id, home_class_id, away_class_id, match_date, league")
@@ -4331,6 +4336,16 @@ function App() {
         .gte("match_date", ymdYesterday)
         .lte("match_date", ymdTomorrow)
         .order("match_date", { ascending: true })
+        .order("match_no", { ascending: true })
+        .limit(300),
+      supabase
+        .from("vleague_s2_matches")
+        .select("id, home_class_id, away_class_id, match_date, league")
+        .in("club_id", clubIds)
+        .gte("match_date", ymdYesterday)
+        .lte("match_date", ymdTomorrow)
+        .order("match_date", { ascending: true })
+        .order("round_no", { ascending: true })
         .order("match_no", { ascending: true })
         .limit(300),
       supabase
@@ -4348,15 +4363,16 @@ function App() {
       setVLeagueTodayMatchIds({ malgeun: null, goun: null });
       return;
     }
-    const fallbackMatches = (vLeagueMatches || []).filter((m) => {
+    const inDateRange = (m) => {
       const clubOk = !m?.club_id || clubIds.includes(m.club_id);
-      return (
-        clubOk &&
-        String(m?.match_date || "") >= ymdYesterday &&
-        String(m?.match_date || "") <= ymdTomorrow
-      );
-    });
+      const ymd = String(m?.match_date || "").slice(0, 10);
+      return clubOk && ymd >= ymdYesterday && ymd <= ymdTomorrow;
+    };
+    const fallbackMatches = (vLeagueMatches || []).filter(inDateRange);
+    const fallbackS2Matches = (vLeagueS2Matches || []).filter(inDateRange);
     const sourceMatches = (matches && matches.length > 0 ? matches : fallbackMatches) || [];
+    const sourceS2Matches =
+      (s2Matches && s2Matches.length > 0 ? s2Matches : fallbackS2Matches) || [];
 
     const tournamentByLeague = { malgeun: [], goun: [] };
     for (const ev of tournamentEvents || []) {
@@ -4367,7 +4383,12 @@ function App() {
       }
     }
 
-    if (sourceMatches.length === 0 && !tournamentByLeague.malgeun.length && !tournamentByLeague.goun.length) {
+    if (
+      sourceMatches.length === 0 &&
+      sourceS2Matches.length === 0 &&
+      !tournamentByLeague.malgeun.length &&
+      !tournamentByLeague.goun.length
+    ) {
       setVLeagueTodayMatches({ malgeun: "", goun: "" });
       setVLeagueTodayMatchIds({ malgeun: null, goun: null });
       return;
@@ -4397,14 +4418,24 @@ function App() {
       return "";
     };
 
-    const byLeague = { malgeun: [], goun: [] };
+    const byLeagueS1 = { malgeun: [], goun: [] };
+    const byLeagueS2 = { malgeun: [], goun: [] };
+    for (const m of sourceS2Matches) {
+      if (!isNowInTodayMatchBannerWindow(m.match_date)) continue;
+      const k = resolveLeagueKey(m);
+      if (k === "malgeun" || k === "goun") byLeagueS2[k].push(m);
+    }
     for (const m of sourceMatches) {
       if (!isNowInTodayMatchBannerWindow(m.match_date)) continue;
       const k = resolveLeagueKey(m);
-      if (k === "malgeun" || k === "goun") byLeague[k].push(m);
+      if (k === "malgeun" || k === "goun") byLeagueS1[k].push(m);
     }
-    const firstMalgeun = byLeague.malgeun[0] || null;
-    const firstGoun = byLeague.goun[0] || null;
+    const firstS2Malgeun = byLeagueS2.malgeun[0] || null;
+    const firstS2Goun = byLeagueS2.goun[0] || null;
+    const firstS1Malgeun = byLeagueS1.malgeun[0] || null;
+    const firstS1Goun = byLeagueS1.goun[0] || null;
+    const firstMalgeun = firstS2Malgeun || firstS1Malgeun;
+    const firstGoun = firstS2Goun || firstS1Goun;
     const toMatchText = (m, leagueLabel) => {
       if (!m) return "";
       const homeClass = classMap.get(m.home_class_id) || "학급";
@@ -4437,7 +4468,7 @@ function App() {
       malgeun: firstMalgeunTournament ? null : firstMalgeun?.id || null,
       goun: firstGounTournament ? null : firstGoun?.id || null,
     });
-  }, [clubs, vLeagueClasses, vLeagueMatches]);
+  }, [clubs, vLeagueClasses, vLeagueMatches, vLeagueS2Matches]);
 
   useEffect(() => {
     loadVLeagueTodayMatchTextRef.current = loadVLeagueTodayMatchText;
