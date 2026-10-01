@@ -5348,6 +5348,75 @@ body {
   gap: 8px;
 }
 
+.records-date-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.records-date-chip {
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.records-date-chip.active {
+  border-color: transparent;
+  background: linear-gradient(90deg, #0ea5e9, #22c55e);
+  color: #ffffff;
+}
+
+.records-register-block {
+  margin-top: 14px;
+}
+
+.records-open-form {
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(90deg, #4f46e5, #06b6d4);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.records-open-form:active {
+  transform: scale(0.99);
+}
+
+.records-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.records-form-title {
+  font-size: 14px;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.records-form-close {
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
 .records-type {
   border: none;
   border-radius: 999px;

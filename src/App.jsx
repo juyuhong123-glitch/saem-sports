@@ -1084,6 +1084,13 @@ function App() {
   const [stackingPhoto, setStackingPhoto] = useState(null); // File
   const [stackingSaving, setStackingSaving] = useState(false);
   const [stackingRecords, setStackingRecords] = useState([]);
+  const [stackingFormOpen, setStackingFormOpen] = useState(false);
+  const [stackingViewDate, setStackingViewDate] = useState(() => {
+    const d = new Date();
+    const pad2 = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  });
+  const [stackingRecordsLoading, setStackingRecordsLoading] = useState(false);
   const [appCols, setAppCols] = useState({
     club_id: "club_id",
     student_id: "student_id",
@@ -1737,24 +1744,84 @@ function App() {
     return (Number(ms) / 1000).toFixed(3);
   };
 
-  const loadStackingRecords = async (clubId, type) => {
-    const { data, error } = await supabase
-      .from("stacking_records")
-      .select(
-        "id, created_at, student_id, student_name, event_type, time_ms, photo_url"
-      )
-      .eq("club_id", clubId)
-      .eq("event_type", type)
-      .order("time_ms", { ascending: true })
-      .limit(50);
+  const STACKING_RECORD_KEEP_DAYS = 5;
 
-    if (error) {
-      setMainMsg(`기록 로딩 실패: ${error.message}`);
-      setStackingRecords([]);
-      return;
+  const getStackingDateOptions = useCallback(() => {
+    const today = toYmd(new Date());
+    const dates = [];
+    for (let i = 0; i < STACKING_RECORD_KEEP_DAYS; i += 1) {
+      dates.push(addDaysYmd(today, -i));
     }
-    setStackingRecords(data || []);
-  };
+    return dates.filter(Boolean);
+  }, [toYmd, addDaysYmd]);
+
+  const purgeOldStackingRecords = useCallback(async (clubId) => {
+    if (!clubId) return;
+    const today = toYmd(new Date());
+    const oldestKeep = addDaysYmd(today, -(STACKING_RECORD_KEEP_DAYS - 1));
+    if (!oldestKeep) return;
+    await supabase
+      .from("stacking_records")
+      .delete()
+      .eq("club_id", clubId)
+      .lt("record_date", oldestKeep);
+  }, [toYmd, addDaysYmd]);
+
+  const loadStackingRecords = useCallback(
+    async (clubId, type, viewDateYmd) => {
+      if (!clubId) {
+        setStackingRecords([]);
+        return;
+      }
+      const today = toYmd(new Date());
+      const dateYmd = String(viewDateYmd || stackingViewDate || today).slice(0, 10);
+      const oldestKeep = addDaysYmd(today, -(STACKING_RECORD_KEEP_DAYS - 1));
+      if (oldestKeep && dateYmd < oldestKeep) {
+        setStackingViewDate(today);
+        setStackingRecords([]);
+        setMainMsg("기록은 최근 5일만 조회할 수 있습니다.");
+        return;
+      }
+
+      setStackingRecordsLoading(true);
+      try {
+        await purgeOldStackingRecords(clubId);
+        const { data, error } = await supabase
+          .from("stacking_records")
+          .select(
+            "id, created_at, record_date, student_id, student_name, event_type, time_ms, photo_url"
+          )
+          .eq("club_id", clubId)
+          .eq("event_type", type)
+          .eq("record_date", dateYmd)
+          .order("time_ms", { ascending: true })
+          .limit(100);
+
+        if (error) {
+          const msg = String(error.message || "");
+          if (/record_date/i.test(msg) || /column .* does not exist/i.test(msg)) {
+            setMainMsg(
+              "기록 일자 컬럼이 필요합니다. Supabase SQL Editor에서 docs/migrations/20260917-stacking-records-daily.sql 을 실행해 주세요."
+            );
+          } else {
+            setMainMsg(`기록 로딩 실패: ${error.message}`);
+          }
+          setStackingRecords([]);
+          return;
+        }
+        setStackingRecords(data || []);
+      } finally {
+        setStackingRecordsLoading(false);
+      }
+    },
+    [
+      stackingViewDate,
+      toYmd,
+      addDaysYmd,
+      purgeOldStackingRecords,
+      setMainMsg,
+    ]
+  );
 
   const handleSaveStackingRecord = async () => {
     setMainMsg("");
@@ -1773,6 +1840,12 @@ function App() {
       return;
     }
 
+    const today = toYmd(new Date());
+    if (String(stackingViewDate || "") !== today) {
+      setMainMsg("기록 등록은 오늘 날짜에서만 할 수 있습니다. 날짜를 오늘로 바꿔 주세요.");
+      return;
+    }
+
     const secs = Number(stackingTime);
     if (!Number.isFinite(secs) || secs <= 0) {
       setMainMsg("기록(초)을 올바르게 입력해 주세요.");
@@ -1783,6 +1856,8 @@ function App() {
     setStackingSaving(true);
     let photoUrl = null;
     try {
+      await purgeOldStackingRecords(club.id);
+
       if (stackingPhoto) {
         const ext = (stackingPhoto.name.split(".").pop() || "jpg").toLowerCase();
         const safeExt = ["png", "jpg", "jpeg", "webp"].includes(ext) ? ext : "jpg";
@@ -1826,14 +1901,23 @@ function App() {
         photoUrl = data?.publicUrl || null;
       }
 
+      // 당일·동일 종목 본인 기록만 교체 (하루 1건 유지)
       const { error: deleteErr } = await supabase
         .from("stacking_records")
         .delete()
         .eq("club_id", club.id)
         .eq("student_id", currentUser.id)
-        .eq("event_type", stackingType);
+        .eq("event_type", stackingType)
+        .eq("record_date", today);
       if (deleteErr) {
-        setMainMsg(`기존 기록 정리 실패: ${deleteErr.message}`);
+        const msg = String(deleteErr.message || "");
+        if (/record_date/i.test(msg) || /column .* does not exist/i.test(msg)) {
+          setMainMsg(
+            "기록 일자 컬럼이 필요합니다. Supabase SQL Editor에서 docs/migrations/20260917-stacking-records-daily.sql 을 실행해 주세요."
+          );
+        } else {
+          setMainMsg(`기존 기록 정리 실패: ${deleteErr.message}`);
+        }
         return;
       }
 
@@ -1845,18 +1929,27 @@ function App() {
           event_type: stackingType,
           time_ms: timeMs,
           photo_url: photoUrl,
+          record_date: today,
         },
       ]);
 
       if (error) {
-        setMainMsg(`기록 저장 실패: ${error.message}`);
+        const msg = String(error.message || "");
+        if (/record_date/i.test(msg) || /column .* does not exist/i.test(msg)) {
+          setMainMsg(
+            "기록 일자 컬럼이 필요합니다. Supabase SQL Editor에서 docs/migrations/20260917-stacking-records-daily.sql 을 실행해 주세요."
+          );
+        } else {
+          setMainMsg(`기록 저장 실패: ${error.message}`);
+        }
         return;
       }
 
       setStackingTime("");
       setStackingPhoto(null);
-      setMainMsg("기록이 등록되었습니다.");
-      await loadStackingRecords(club.id, stackingType);
+      setStackingFormOpen(false);
+      setMainMsg("오늘 기록이 등록(갱신)되었습니다.");
+      await loadStackingRecords(club.id, stackingType, today);
     } finally {
       setStackingSaving(false);
     }
@@ -4324,20 +4417,20 @@ function App() {
       return now >= start && now < end;
     };
 
+    // 달력(club_events)과 동일한 소스 우선. 대진표 테이블은 달력에 없을 때만 보조.
     const [
-      { data: matches, error },
-      { data: s2Matches },
-      { data: tournamentEvents },
+      { data: calendarEvents, error: calendarErr },
+      { data: s2Matches, error: s2Err },
+      { data: matches, error: s1Err },
     ] = await Promise.all([
       supabase
-        .from("vleague_matches")
-        .select("id, home_class_id, away_class_id, match_date, league")
+        .from("club_events")
+        .select("id, event_date, content")
         .in("club_id", clubIds)
-        .gte("match_date", ymdYesterday)
-        .lte("match_date", ymdTomorrow)
-        .order("match_date", { ascending: true })
-        .order("match_no", { ascending: true })
-        .limit(300),
+        .gte("event_date", ymdYesterday)
+        .lte("event_date", ymdTomorrow)
+        .order("event_date", { ascending: true })
+        .limit(200),
       supabase
         .from("vleague_s2_matches")
         .select("id, home_class_id, away_class_id, match_date, league")
@@ -4349,50 +4442,61 @@ function App() {
         .order("match_no", { ascending: true })
         .limit(300),
       supabase
-        .from("club_events")
-        .select("id, event_date, content")
+        .from("vleague_matches")
+        .select("id, home_class_id, away_class_id, match_date, league")
         .in("club_id", clubIds)
-        .ilike("content", "%[토너먼트]%")
-        .gte("event_date", ymdYesterday)
-        .lte("event_date", ymdTomorrow)
-        .order("event_date", { ascending: true })
-        .limit(50),
+        .gte("match_date", ymdYesterday)
+        .lte("match_date", ymdTomorrow)
+        .order("match_date", { ascending: true })
+        .order("match_no", { ascending: true })
+        .limit(300),
     ]);
-    if (error) {
-      setVLeagueTodayMatches({ malgeun: "", goun: "" });
-      setVLeagueTodayMatchIds({ malgeun: null, goun: null });
-      return;
-    }
-    const inDateRange = (m) => {
-      const clubOk = !m?.club_id || clubIds.includes(m.club_id);
-      const ymd = String(m?.match_date || "").slice(0, 10);
-      return clubOk && ymd >= ymdYesterday && ymd <= ymdTomorrow;
-    };
-    const fallbackMatches = (vLeagueMatches || []).filter(inDateRange);
-    const fallbackS2Matches = (vLeagueS2Matches || []).filter(inDateRange);
-    const sourceMatches = (matches && matches.length > 0 ? matches : fallbackMatches) || [];
-    const sourceS2Matches =
-      (s2Matches && s2Matches.length > 0 ? s2Matches : fallbackS2Matches) || [];
 
-    const tournamentByLeague = { malgeun: [], goun: [] };
-    for (const ev of tournamentEvents || []) {
-      if (!isNowInTodayMatchBannerWindow(ev.event_date)) continue;
-      const leagueKey = getTournamentLeagueKeyFromContent(ev.content);
-      if (leagueKey === "malgeun" || leagueKey === "goun") {
-        tournamentByLeague[leagueKey].push(ev);
+    const isVLeagueScheduleEvent = (content) => {
+      const c = String(content || "");
+      return (
+        c.includes("[2학기]") ||
+        c.includes("⟦vs2:") ||
+        c.includes("⟦vm:") ||
+        c.includes("[토너먼트]") ||
+        (c.includes(" vs ") && (c.includes("[맑은샘]") || c.includes("[고운샘]")))
+      );
+    };
+    const extractMatchIdFromContent = (content) => {
+      const c = String(content || "");
+      const s2 = /⟦vs2:([^⟧]+)⟧/.exec(c);
+      if (s2?.[1]) return String(s2[1]).trim();
+      const s1 = /⟦vm:([^⟧]+)⟧/.exec(c);
+      if (s1?.[1]) return String(s1[1]).trim();
+      return null;
+    };
+    const formatCalendarEventForScoreboard = (ev, leagueLabel) => {
+      if (!ev) return "";
+      const raw = String(ev.content || "");
+      if (raw.includes("[토너먼트]")) {
+        return formatTournamentEventForScoreboard(raw, leagueLabel);
+      }
+      let text = formatEventContentForDisplay(raw)
+        .replace(/^\[2학기\]\s*/u, "")
+        .replace(/\s+vs\s+/iu, " VS ")
+        .trim();
+      if (!text) return "";
+      if (!text.startsWith("[")) text = `[${leagueLabel}] ${text}`;
+      return text;
+    };
+
+    const calendarByLeague = { malgeun: [], goun: [] };
+    if (!calendarErr) {
+      for (const ev of calendarEvents || []) {
+        if (!isNowInTodayMatchBannerWindow(ev.event_date)) continue;
+        if (!isVLeagueScheduleEvent(ev.content)) continue;
+        const leagueKey = getTournamentLeagueKeyFromContent(ev.content);
+        if (leagueKey === "malgeun" || leagueKey === "goun") {
+          calendarByLeague[leagueKey].push(ev);
+        }
       }
     }
 
-    if (
-      sourceMatches.length === 0 &&
-      sourceS2Matches.length === 0 &&
-      !tournamentByLeague.malgeun.length &&
-      !tournamentByLeague.goun.length
-    ) {
-      setVLeagueTodayMatches({ malgeun: "", goun: "" });
-      setVLeagueTodayMatchIds({ malgeun: null, goun: null });
-      return;
-    }
     const inferGradeFromClassName = (className) => {
       const s = String(className || "").trim();
       if (!s) return null;
@@ -4417,25 +4521,6 @@ function App() {
       if (grade === 6) return "goun";
       return "";
     };
-
-    const byLeagueS1 = { malgeun: [], goun: [] };
-    const byLeagueS2 = { malgeun: [], goun: [] };
-    for (const m of sourceS2Matches) {
-      if (!isNowInTodayMatchBannerWindow(m.match_date)) continue;
-      const k = resolveLeagueKey(m);
-      if (k === "malgeun" || k === "goun") byLeagueS2[k].push(m);
-    }
-    for (const m of sourceMatches) {
-      if (!isNowInTodayMatchBannerWindow(m.match_date)) continue;
-      const k = resolveLeagueKey(m);
-      if (k === "malgeun" || k === "goun") byLeagueS1[k].push(m);
-    }
-    const firstS2Malgeun = byLeagueS2.malgeun[0] || null;
-    const firstS2Goun = byLeagueS2.goun[0] || null;
-    const firstS1Malgeun = byLeagueS1.malgeun[0] || null;
-    const firstS1Goun = byLeagueS1.goun[0] || null;
-    const firstMalgeun = firstS2Malgeun || firstS1Malgeun;
-    const firstGoun = firstS2Goun || firstS1Goun;
     const toMatchText = (m, leagueLabel) => {
       if (!m) return "";
       const homeClass = classMap.get(m.home_class_id) || "학급";
@@ -4450,23 +4535,59 @@ function App() {
       const away = awayNick ? `${awayNick}(${awayShort})` : awayShort;
       return `[${leagueLabel}] ${home} VS ${away}`;
     };
-    const firstMalgeunTournament = tournamentByLeague.malgeun[0] || null;
-    const firstGounTournament = tournamentByLeague.goun[0] || null;
-    const toTournamentText = (ev, leagueLabel) => {
-      if (!ev) return "";
-      return formatTournamentEventForScoreboard(ev.content, leagueLabel);
+
+    // DB 조회가 성공하면 빈 배열을 그대로 사용(메모리 폴백으로 옛 일정이 남지 않게).
+    // 조회 실패 시에만 메모리 상태를 보조로 사용.
+    const inDateRange = (m) => {
+      const ymd = String(m?.match_date || "").slice(0, 10);
+      return ymd >= ymdYesterday && ymd <= ymdTomorrow;
     };
+    const sourceS2Matches = !s2Err
+      ? s2Matches || []
+      : (vLeagueS2Matches || []).filter(inDateRange);
+    // 홈 전광판은 현재 학기(2학기) 기준. 달력/2학기 대진이 없을 때만 1학기 보조.
+    const sourceS1Matches = !s1Err
+      ? matches || []
+      : (vLeagueMatches || []).filter(inDateRange);
+
+    const byLeagueS2 = { malgeun: [], goun: [] };
+    const byLeagueS1 = { malgeun: [], goun: [] };
+    for (const m of sourceS2Matches) {
+      if (!isNowInTodayMatchBannerWindow(m.match_date)) continue;
+      const k = resolveLeagueKey(m);
+      if (k === "malgeun" || k === "goun") byLeagueS2[k].push(m);
+    }
+    for (const m of sourceS1Matches) {
+      if (!isNowInTodayMatchBannerWindow(m.match_date)) continue;
+      const k = resolveLeagueKey(m);
+      if (k === "malgeun" || k === "goun") byLeagueS1[k].push(m);
+    }
+
+    const pickForLeague = (leagueKey, leagueLabel) => {
+      const calEv = calendarByLeague[leagueKey][0] || null;
+      if (calEv) {
+        return {
+          text: formatCalendarEventForScoreboard(calEv, leagueLabel),
+          matchId: extractMatchIdFromContent(calEv.content),
+        };
+      }
+      const s2 = byLeagueS2[leagueKey][0] || null;
+      if (s2) {
+        return { text: toMatchText(s2, leagueLabel), matchId: s2.id || null };
+      }
+      // 달력·2학기 모두 없으면 1학기도 표시하지 않음(학기 불일치로 "일정이 있다"처럼 보이는 것 방지)
+      return { text: "", matchId: null };
+    };
+
+    const malgeun = pickForLeague("malgeun", "맑은샘");
+    const goun = pickForLeague("goun", "고운샘");
     setVLeagueTodayMatches({
-      malgeun:
-        toTournamentText(firstMalgeunTournament, "맑은샘") ||
-        toMatchText(firstMalgeun, "맑은샘"),
-      goun:
-        toTournamentText(firstGounTournament, "고운샘") ||
-        toMatchText(firstGoun, "고운샘"),
+      malgeun: malgeun.text,
+      goun: goun.text,
     });
     setVLeagueTodayMatchIds({
-      malgeun: firstMalgeunTournament ? null : firstMalgeun?.id || null,
-      goun: firstGounTournament ? null : firstGoun?.id || null,
+      malgeun: malgeun.matchId,
+      goun: goun.matchId,
     });
   }, [clubs, vLeagueClasses, vLeagueMatches, vLeagueS2Matches]);
 
@@ -6753,7 +6874,9 @@ function App() {
       await loadAttendance(club.id, toYmd(new Date()));
     }
     if (isSportStackingClub(clubName)) {
-      loadStackingRecords(club.id, stackingType);
+      const today = toYmd(new Date());
+      setStackingViewDate(today);
+      loadStackingRecords(club.id, stackingType, today);
     }
   };
 
@@ -7167,16 +7290,6 @@ function App() {
                     currentUser.role === "student" && club
                       ? getMyStatusForClub(club.id)
                       : null;
-                  const tournamentYmd =
-                    club?.id && homeTournamentYmdByClubId[club.id]
-                      ? homeTournamentYmdByClubId[club.id]
-                      : "";
-                  const tournamentDateLabel = tournamentYmd
-                    ? formatYmdDot(tournamentYmd)
-                    : "";
-                  const tournamentDdayLabel = tournamentYmd
-                    ? formatDdayLabel(tournamentYmd)
-                    : "";
                   return (
                     <div
                       key={name}
@@ -7250,17 +7363,6 @@ function App() {
                             )}
                           </div>
                         </div>
-                        {name !== V_LEAGUE_LABEL && name !== "컬러풀 스포츠" && (
-                          <div className="sport-tournament-dday" aria-live="polite">
-                            {tournamentYmd ? (
-                              <span className="sport-tournament-date sport-tournament-date--fixed">
-                                {`대회일 ${tournamentDateLabel} · ${tournamentDdayLabel}`}
-                              </span>
-                            ) : (
-                              <span className="sport-tournament-date">대회일 미정</span>
-                            )}
-                          </div>
-                        )}
                         {name === V_LEAGUE_LABEL && isActive && (
                           <>
                             {showVLeagueHomeStandingsPopup && (
@@ -8170,9 +8272,12 @@ function App() {
                         }
                         onClick={async () => {
                           setClubTab("records");
+                          setStackingFormOpen(false);
                           const club = getClubByName(page.clubName);
                           if (!club) return;
-                          await loadStackingRecords(club.id, stackingType);
+                          const today = toYmd(new Date());
+                          setStackingViewDate(today);
+                          await loadStackingRecords(club.id, stackingType, today);
                         }}
                       >
                         기록 등록
@@ -9623,7 +9728,7 @@ function App() {
                   <div className="vleague-section-head">
                     <div className="vleague-section-title">2학기 리그전 대진표</div>
                     <p className="vleague-section-desc">
-                      그룹 대항전(교차 경기만). 주당 학급 1경기 우선, 불가 시 2경기 허용.
+                      그룹 대항전(교차 경기만). 학급당 주간 경기 수 제한 없음(같은 주 2회 이상 가능).
                       월·목·주말·공휴일은 자동 제외합니다.
                     </p>
                   </div>
@@ -11203,7 +11308,7 @@ function App() {
               {clubTab === "records" && isSportStackingClub(page.clubName) && (
                 <div className="club-page-body">
                   <div className="records-head">
-                    <div className="records-title">기록 등록</div>
+                    <div className="records-title">기록 순위</div>
                     <div className="records-types">
                       {["3-6-3", "싸이클"].map((t) => (
                         <button
@@ -11218,7 +11323,7 @@ function App() {
                             setStackingType(t);
                             const club = getClubByName(page.clubName);
                             if (!club) return;
-                            await loadStackingRecords(club.id, t);
+                            await loadStackingRecords(club.id, t, stackingViewDate);
                           }}
                         >
                           {t}
@@ -11227,55 +11332,50 @@ function App() {
                     </div>
                   </div>
 
-                  {currentUser.role === "student" ? (
-                    <div className="records-form">
-                      <label className="records-label">
-                        내 기록(초)
-                        <input
-                          type="number"
-                          inputMode="decimal"
-                          step="0.001"
-                          min="0.001"
-                          className="records-input"
-                          placeholder="예: 12.345"
-                          value={stackingTime}
-                          onChange={(e) => setStackingTime(e.target.value)}
-                        />
-                      </label>
-                      <label className="records-label">
-                        사진 첨부(선택)
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="records-file"
-                          onChange={(e) =>
-                            setStackingPhoto(e.target.files?.[0] || null)
+                  <div className="records-date-row" aria-label="기록 조회 날짜">
+                    {getStackingDateOptions().map((ymd) => {
+                      const today = toYmd(new Date());
+                      const isToday = ymd === today;
+                      const label = isToday
+                        ? "오늘"
+                        : (() => {
+                            const d = parseYmdLocal(ymd);
+                            if (!d) return ymd;
+                            return `${d.getMonth() + 1}/${d.getDate()}`;
+                          })();
+                      return (
+                        <button
+                          key={ymd}
+                          type="button"
+                          className={
+                            "records-date-chip" +
+                            (stackingViewDate === ymd ? " active" : "")
                           }
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        className="records-save"
-                        disabled={stackingSaving}
-                        onClick={handleSaveStackingRecord}
-                      >
-                        {stackingSaving ? "저장 중..." : "등록"}
-                      </button>
-                      <div className="records-hint">
-                        초 단위로 소수점 3자리까지 입력할 수 있어요.
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="records-hint">
-                      교사는 학생이 등록한 기록을 확인할 수 있습니다.
-                    </div>
-                  )}
+                          onClick={async () => {
+                            setStackingViewDate(ymd);
+                            if (ymd !== today) setStackingFormOpen(false);
+                            const club = getClubByName(page.clubName);
+                            if (!club) return;
+                            await loadStackingRecords(club.id, stackingType, ymd);
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
 
                   <div className="records-list">
                     <div className="records-list-title">
-                      {stackingType} 기록 (빠른 순)
+                      {stackingType} ·{" "}
+                      {stackingViewDate === toYmd(new Date())
+                        ? "오늘"
+                        : formatYmdDot(stackingViewDate)}{" "}
+                      순위 (빠른 순)
                     </div>
-                    {stackingRecords.length === 0 ? (
+                    {stackingRecordsLoading ? (
+                      <div className="cal-loading">불러오는 중...</div>
+                    ) : stackingRecords.length === 0 ? (
                       <div className="activity-empty">등록된 기록이 없습니다.</div>
                     ) : (
                       <div className="records-table">
@@ -11352,6 +11452,88 @@ function App() {
                       </div>
                     )}
                   </div>
+
+                  <div className="records-hint">
+                    최근 5일 기록만 보관됩니다. 5일이 지나면 자동 삭제됩니다.
+                  </div>
+
+                  {currentUser.role === "student" ? (
+                    stackingViewDate === toYmd(new Date()) ? (
+                      <div className="records-register-block">
+                        {!stackingFormOpen ? (
+                          <button
+                            type="button"
+                            className="records-open-form"
+                            onClick={() => setStackingFormOpen(true)}
+                          >
+                            기록 등록
+                          </button>
+                        ) : (
+                          <div className="records-form">
+                            <div className="records-form-head">
+                              <div className="records-form-title">내 기록 등록</div>
+                              <button
+                                type="button"
+                                className="records-form-close"
+                                onClick={() => {
+                                  setStackingFormOpen(false);
+                                  setStackingTime("");
+                                  setStackingPhoto(null);
+                                }}
+                              >
+                                닫기
+                              </button>
+                            </div>
+                            <label className="records-label">
+                              내 기록(초)
+                              <input
+                                type="number"
+                                inputMode="decimal"
+                                step="0.001"
+                                min="0.001"
+                                className="records-input"
+                                placeholder="예: 12.345"
+                                value={stackingTime}
+                                onChange={(e) => setStackingTime(e.target.value)}
+                              />
+                            </label>
+                            <label className="records-label">
+                              사진 첨부(선택)
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="records-file"
+                                onChange={(e) =>
+                                  setStackingPhoto(e.target.files?.[0] || null)
+                                }
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              className="records-save"
+                              disabled={stackingSaving}
+                              onClick={handleSaveStackingRecord}
+                            >
+                              {stackingSaving ? "저장 중..." : "등록/갱신"}
+                            </button>
+                            <div className="records-hint">
+                              초 단위로 소수점 3자리까지 입력할 수 있어요. 같은
+                              날·같은 종목은 새로 등록하면 이전 기록이 갱신됩니다.
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="records-hint">
+                        과거 날짜는 조회만 가능합니다. 기록 등록은 「오늘」에서 해
+                        주세요.
+                      </div>
+                    )
+                  ) : (
+                    <div className="records-hint">
+                      교사는 학생이 등록한 기록을 날짜별로 확인할 수 있습니다.
+                    </div>
+                  )}
                 </div>
               )}
 
