@@ -5672,11 +5672,29 @@ function App() {
   };
 
   const findNextAvailableDateAfterS2 = async (clubId, startYmd, leagueKey) => {
+    const perDay = Math.max(1, Number(vLeagueS2GenGamesPerDay || 2));
+    const league = String(leagueKey || "");
     let cur = nextPlayableYmdS2(startYmd, leagueKey);
     for (let i = 0; i < 366; i += 1) {
       if (!cur) return null;
-      const blocked = await isDateBlockedByEvents(clubId, cur);
-      if (!blocked) return cur;
+      // 맑은샘/고운샘은 동시 진행 가능 → 같은 리그 경기만 날짜 점유로 본다
+      const { data, error } = await supabase
+        .from("vleague_s2_matches")
+        .select("id")
+        .eq("league", league)
+        .eq("match_date", cur)
+        .limit(50);
+      let sameLeagueCount = 0;
+      if (error) {
+        sameLeagueCount = (vLeagueS2Matches || []).filter(
+          (m) =>
+            String(m.league || "") === league &&
+            String(m.match_date || "").slice(0, 10) === cur
+        ).length;
+      } else {
+        sameLeagueCount = (data || []).length;
+      }
+      if (sameLeagueCount < perDay) return cur;
       cur = nextPlayableYmdS2(addDaysYmd(cur, 1), leagueKey);
     }
     return null;
@@ -6012,7 +6030,7 @@ function App() {
     const club = getClubByName(page.clubName);
     if (!club?.id || !matchRow?.id) return;
     const ok = window.confirm(
-      "이 2학기 경기를 맨 뒤 날짜로 연기할까요?\n\n- 월/목·토/일·공휴일·제외일·기존 일정이 있는 날짜는 피합니다."
+      "이 2학기 경기를 맨 뒤 날짜로 연기할까요?\n\n- 월/목·토/일·공휴일·제외일은 피합니다.\n- 같은 리그(맑은샘/고운샘) 경기가 이미 찬 날짜만 피합니다.\n- 다른 리그와는 같은 날에 겹쳐도 됩니다."
     );
     if (!ok) return;
     setVLeagueS2MatchPostponingId(matchRow.id);
@@ -6260,26 +6278,33 @@ function App() {
     return max;
   };
 
-  const isDateBlockedByEvents = async (clubId, ymd) => {
-    const { data, error } = await supabase
-      .from("club_events")
-      .select("id")
-      .eq("club_id", clubId)
-      .eq("event_date", ymd)
-      .limit(1);
-    if (error) return true;
-    return (data || []).length > 0;
-  };
-
   const findNextAvailableDateAfter = async (clubId, startYmd, leagueKey) => {
+    const perDay = Math.max(1, Number(vLeagueGenGamesPerDay || 2));
+    const league = String(leagueKey || "");
     let cur = nextPlayableYmd(startYmd, leagueKey);
     for (let i = 0; i < 366; i += 1) {
       if (!cur) return null;
-      const blocked = await isDateBlockedByEvents(clubId, cur);
-      if (!blocked) return cur;
+      // 맑은샘/고운샘은 동시 진행 가능 → 같은 리그 경기만 날짜 점유로 본다
+      const { data, error } = await supabase
+        .from("vleague_matches")
+        .select("id")
+        .eq("league", league)
+        .eq("match_date", cur)
+        .limit(50);
+      let sameLeagueCount = 0;
+      if (error) {
+        sameLeagueCount = (vLeagueMatches || []).filter(
+          (m) =>
+            String(m.league || "") === league &&
+            String(m.match_date || "").slice(0, 10) === cur
+        ).length;
+      } else {
+        sameLeagueCount = (data || []).length;
+      }
+      if (sameLeagueCount < perDay) return cur;
       cur = nextPlayableYmd(addDaysYmd(cur, 1), leagueKey);
     }
-    return cur;
+    return null;
   };
 
   const getSiblingMatchIds = async (matchRow) => {
@@ -6320,7 +6345,7 @@ function App() {
     }
 
     const ok = window.confirm(
-      "이 경기를 맨 뒤 날짜로 연기할까요?\n\n- 다른 경기 날짜는 그대로 유지됩니다.\n- 토/일, 제외 날짜(공휴일), 기존 일정이 있는 날짜는 피해서 배정됩니다."
+      "이 경기를 맨 뒤 날짜로 연기할까요?\n\n- 다른 경기 날짜는 그대로 유지됩니다.\n- 토/일·제외 날짜(공휴일)는 피합니다.\n- 같은 리그 경기가 이미 찬 날짜만 피합니다.\n- 다른 리그(맑은샘/고운샘)와는 같은 날에 겹쳐도 됩니다."
     );
     if (!ok) return;
 
