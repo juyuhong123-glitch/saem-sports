@@ -250,9 +250,9 @@ const KOREA_HOLIDAYS_2026 = new Set([
   "2026-06-08", // 현충일 대체공휴일
   "2026-08-15", // 광복절
   "2026-08-17", // 광복절 대체공휴일
-  "2026-09-23", // 추석 연휴
-  "2026-09-24", // 추석
-  "2026-09-25", // 추석 연휴
+  "2026-09-24", // 추석 연휴(전날)
+  "2026-09-25", // 추석
+  "2026-09-26", // 추석 연휴(다음날)
   "2026-10-03", // 개천절
   "2026-10-05", // 개천절 대체공휴일
   "2026-10-09", // 한글날
@@ -610,9 +610,9 @@ const VLEAGUE_S2_GROUP_DEFS = {
       hint: "2·3·6·7위",
       classNames: ["6학년 7반", "6학년 1반", "6학년 6반", "6학년 2반"],
     },
-    // 가상팀 0승 4패 보정: 4팀 그룹 승점 합 +12 (가상팀 UI는 노출하지 않음)
-    bonusGroupKey: "b",
-    bonusPoints: 12,
+    // 교차전 총 경기 수: A 3×4 = B 4×3 = 12 → 그룹 합 보정치 없음
+    bonusGroupKey: null,
+    bonusPoints: 0,
   },
 };
 
@@ -3125,7 +3125,7 @@ function App() {
     [vLeagueComputedStandings]
   );
 
-  /** 2학기 그룹 대항전 진행 현황 (실경기 결과 + 고운샘 B조 +12 보정) */
+  /** 2학기 그룹 대항전 진행 현황 (교차전 실경기 결과) */
   const getVLeagueS2GroupProgress = useCallback(
     (leagueKey) => {
       const { malgeun, goun } = splitVLeagueClassesByGrade(vLeagueClasses || []);
