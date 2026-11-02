@@ -108,6 +108,41 @@ function findEvAny(events, needles) {
   return null;
 }
 
+/**
+ * PO 일정만 찾기. "준PO 1" 문자열에 "PO 1"이 포함되므로 단순 includes 금지.
+ * 예: "... PO 1(단판):" / "... 플레이오프 1(단판):"
+ */
+function isPoMatchContent(content, gameNo) {
+  const c = String(content || "");
+  if (/준PO|준플레이오프/.test(c)) return false;
+  const n = Number(gameNo);
+  return (
+    new RegExp(`\\bPO\\s*${n}\\b`).test(c) ||
+    new RegExp(`플레이오프\\s*${n}`).test(c)
+  );
+}
+
+function findPoEv(events, gameNo) {
+  return (
+    (events || []).find((ev) => isPoMatchContent(ev.content, gameNo)) || null
+  );
+}
+
+function isSemiPoContent(content, gameNo) {
+  const c = String(content || "");
+  const n = Number(gameNo);
+  return (
+    new RegExp(`준PO\\s*${n}`).test(c) ||
+    new RegExp(`준플레이오프\\s*${n}`).test(c)
+  );
+}
+
+function findSemiPoEv(events, gameNo) {
+  return (
+    (events || []).find((ev) => isSemiPoContent(ev.content, gameNo)) || null
+  );
+}
+
 function getWinnerLoser(content, getSide, getTeams) {
   const side = getSide(content);
   const teams = getTeams(content);
@@ -147,10 +182,10 @@ export function buildS2TournamentDraft({
     );
 
   const wcEv = findEvAny(list, ["WC전", "와일드카드전"]);
-  const sp1Ev = findEvAny(list, ["준PO 1", "준플레이오프 1"]);
-  const sp2Ev = findEvAny(list, ["준PO 2", "준플레이오프 2"]);
-  const po1Ev = findEvAny(list, ["PO 1", "플레이오프 1"]);
-  const po2Ev = findEvAny(list, ["PO 2", "플레이오프 2"]);
+  const sp1Ev = findSemiPoEv(list, 1);
+  const sp2Ev = findSemiPoEv(list, 2);
+  const po1Ev = findPoEv(list, 1);
+  const po2Ev = findPoEv(list, 2);
   const final1Ev = findEv(list, "결승 1차전");
 
   const wcResult = wcEv
@@ -342,6 +377,7 @@ export function buildS2BracketViewModel({
   progress,
   getWinnerSide,
   getTeams,
+  playoffPick = null,
 }) {
   const marker = getS2TournamentMarker(leagueKey);
   const list = (events || []).filter((ev) =>
@@ -383,14 +419,16 @@ export function buildS2BracketViewModel({
         po2: false,
         final: false,
       },
+      needPlayoffPick: false,
+      playoffOptions: [],
     };
   }
 
   const wcEv = findEvAny(list, ["WC전", "와일드카드전"]);
-  const sp1Ev = findEvAny(list, ["준PO 1", "준플레이오프 1"]);
-  const sp2Ev = findEvAny(list, ["준PO 2", "준플레이오프 2"]);
-  const po1Ev = findEvAny(list, ["PO 1", "플레이오프 1"]);
-  const po2Ev = findEvAny(list, ["PO 2", "플레이오프 2"]);
+  const sp1Ev = findSemiPoEv(list, 1);
+  const sp2Ev = findSemiPoEv(list, 2);
+  const po1Ev = findPoEv(list, 1);
+  const po2Ev = findPoEv(list, 2);
   const finalEv = findEv(list, "결승 1차전") || findEv(list, "결승");
 
   const sideOf = (ev) => (ev ? getWinnerSide(ev.content) : null);
@@ -420,12 +458,38 @@ export function buildS2BracketViewModel({
   const sp2 = teamsOf(sp2Ev, labels?.w4, labels?.l1);
   const sp1Win = sideOf(sp1Ev);
   const sp2Win = sideOf(sp2Ev);
+  const sp1WinnerLabel =
+    sp1Win === "home" ? sp1.home : sp1Win === "away" ? sp1.away : null;
+  const sp2WinnerLabel =
+    sp2Win === "home" ? sp2.home : sp2Win === "away" ? sp2.away : null;
 
-  // PO: 승리조 1·2위는 확정. 상대는 1위 선택·일정 생성 후 채워짐
-  const po1 = teamsOf(po1Ev, labels?.w1, "준PO 승자");
-  const po2 = teamsOf(po2Ev, labels?.w2, "준PO 승자");
+  // PO: 승리조 1·2위는 준PO 종료 시점부터 표기. 상대는 1위 선택 후 확정
+  let po1AwayFallback = "상대 선택";
+  let po2AwayFallback = "상대 선택";
+  if (sp1WinnerLabel && sp2WinnerLabel) {
+    if (playoffPick === "sp1") {
+      po1AwayFallback = sp1WinnerLabel;
+      po2AwayFallback = sp2WinnerLabel;
+    } else if (playoffPick === "sp2") {
+      po1AwayFallback = sp2WinnerLabel;
+      po2AwayFallback = sp1WinnerLabel;
+    } else {
+      po1AwayFallback = "준PO 승자(선택)";
+      po2AwayFallback = "준PO 승자(선택)";
+    }
+  }
+  const po1 = teamsOf(po1Ev, labels?.w1, po1AwayFallback);
+  const po2 = teamsOf(po2Ev, labels?.w2, po2AwayFallback);
   const po1Win = sideOf(po1Ev);
   const po2Win = sideOf(po2Ev);
+  const needPlayoffPick =
+    Boolean(sp1WinnerLabel && sp2WinnerLabel) && !po1Ev && !po2Ev;
+  const playoffOptions = needPlayoffPick
+    ? [
+        { value: "sp1", label: sp1WinnerLabel },
+        { value: "sp2", label: sp2WinnerLabel },
+      ]
+    : [];
   const po1Winner =
     po1Win === "home"
       ? po1.home
@@ -542,5 +606,7 @@ export function buildS2BracketViewModel({
       po2: liveKey === "po2",
       final: liveKey === "final",
     },
+    needPlayoffPick,
+    playoffOptions,
   };
 }

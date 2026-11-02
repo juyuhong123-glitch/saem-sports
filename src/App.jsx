@@ -3564,12 +3564,14 @@ function App() {
       progress: vLeagueS2Progress,
       getWinnerSide: getTournamentWinnerSideFromContent,
       getTeams: parseTournamentTeamsFromContent,
+      playoffPick: vLeagueS2PlayoffPick || null,
     });
   }, [
     homeVLeagueTournamentEvents,
     vLeagueS2TournamentEvents,
     vLeagueGradeTab,
     vLeagueS2Progress,
+    vLeagueS2PlayoffPick,
   ]);
 
   /** 관리자 탭: 생성 초안이 있으면 초안 기준, 없으면 저장분 */
@@ -3590,13 +3592,24 @@ function App() {
       progress: vLeagueS2Progress,
       getWinnerSide: getTournamentWinnerSideFromContent,
       getTeams: parseTournamentTeamsFromContent,
+      playoffPick: vLeagueS2PlayoffPick || null,
     });
   }, [
     vLeagueS2TournamentDraft,
     vLeagueS2TournamentEvents,
     vLeagueGradeTab,
     vLeagueS2Progress,
+    vLeagueS2PlayoffPick,
   ]);
+
+  /** 준PO 종료·PO 미생성 시 상대 선택 옵션 자동 노출 */
+  useEffect(() => {
+    if (!adminS2Bracket?.needPlayoffPick) {
+      setVLeagueS2PlayoffOptions([]);
+      return;
+    }
+    setVLeagueS2PlayoffOptions(adminS2Bracket.playoffOptions || []);
+  }, [adminS2Bracket?.needPlayoffPick, adminS2Bracket?.playoffOptions]);
 
   const handleGenerateVLeagueS2TournamentDraft = useCallback(() => {
     if (!isVLeagueAdmin) {
@@ -11022,17 +11035,29 @@ function App() {
                           }
                         />
                       </label>
-                      {vLeagueS2PlayoffOptions.length > 0 && (
+                      {(adminS2Bracket?.needPlayoffPick ||
+                        vLeagueS2PlayoffOptions.length > 0) && (
                         <label className="vleague-field">
-                          <span>승리 조 1위 상대 (준PO 승자)</span>
+                          <span>
+                            승리 조 1위(
+                            {adminS2Bracket?.po1?.home &&
+                            adminS2Bracket.po1.home !== "-"
+                              ? adminS2Bracket.po1.home.replace(/^\d+\s*위\s*/, "")
+                              : "1위"}
+                            ) 상대 선택
+                          </span>
                           <select
                             value={vLeagueS2PlayoffPick}
-                            onChange={(e) =>
-                              setVLeagueS2PlayoffPick(e.target.value)
-                            }
+                            onChange={(e) => {
+                              setVLeagueS2PlayoffPick(e.target.value);
+                              setVLeagueS2TournamentDraft([]);
+                            }}
                           >
-                            <option value="">선택하세요</option>
-                            {vLeagueS2PlayoffOptions.map((opt) => (
+                            <option value="">준PO 승자 중 선택</option>
+                            {(vLeagueS2PlayoffOptions.length > 0
+                              ? vLeagueS2PlayoffOptions
+                              : adminS2Bracket?.playoffOptions || []
+                            ).map((opt) => (
                               <option key={opt.value} value={opt.value}>
                                 {opt.label}
                               </option>
@@ -11041,11 +11066,28 @@ function App() {
                         </label>
                       )}
                     </div>
+                    {(adminS2Bracket?.needPlayoffPick ||
+                      vLeagueS2PlayoffOptions.length > 0) && (
+                      <div className="vleague-matches-viewer-note">
+                        준PO가 끝났습니다. 승리 조 1위가 준PO 승자 중 한 팀을
+                        고르면 PO 1에 배치되고, 나머지 승자는 승리 조 2위(
+                        {adminS2Bracket?.po2?.home &&
+                        adminS2Bracket.po2.home !== "-"
+                          ? adminS2Bracket.po2.home.replace(/^\d+\s*위\s*/, "")
+                          : "2위"}
+                        )와 PO 2에서 맞붙습니다. 상대를 고른 뒤 「토너먼트 일정
+                        생성」→「일정에 저장」하세요.
+                      </div>
+                    )}
                     <div className="vleague-matches-action-row">
                       <button
                         type="button"
                         className="vleague-primary"
-                        disabled={!vLeagueS2LeagueReadyForTournament}
+                        disabled={
+                          !vLeagueS2LeagueReadyForTournament ||
+                          (Boolean(adminS2Bracket?.needPlayoffPick) &&
+                            !vLeagueS2PlayoffPick)
+                        }
                         onClick={handleGenerateVLeagueS2TournamentDraft}
                       >
                         토너먼트 일정 생성
